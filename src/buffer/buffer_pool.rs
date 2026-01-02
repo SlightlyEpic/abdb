@@ -1,6 +1,8 @@
-use std::ops::{Deref, DerefMut};
-
-use crate::{common::aliases, storage, wal};
+use crate::{
+    buffer::{PageReadGuard, PageWriteGuard},
+    common::aliases,
+    storage, wal,
+};
 
 #[derive(Clone, Debug)]
 pub enum Error {
@@ -15,12 +17,12 @@ pub trait BufferPool: Send + Sync + 'static {
     type Error: std::fmt::Debug;
 
     // The RAII guard for reading (Shared Latch)
-    type ReadGuard<'a>: Deref<Target = aliases::PageBuffer> + Send
+    type ReadGuard<'a>: PageReadGuard
     where
         Self: 'a;
 
     // The RAII guard for writing (Exclusive Latch)
-    type WriteGuard<'a>: PageWriteGuard + Send
+    type WriteGuard<'a>: PageWriteGuard
     where
         Self: 'a;
 
@@ -45,21 +47,3 @@ pub trait BufferPool: Send + Sync + 'static {
 
     fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send;
 }
-
-pub trait PageWriteGuard: DerefMut<Target = aliases::PageBuffer> {
-    fn page_id(&self) -> aliases::PageId;
-    fn is_dirty(&self);
-
-    /// Updates the page's PageLSN.
-    /// This must be called before the guard is dropped if modifications were made.
-    /// It ensures the WAL invariant: DataLSN <= LogLSN.
-    fn mark_dirty(&mut self, lsn: aliases::Lsn);
-}
-
-// impl<'a> Drop for WriteGuard<'a> {
-//     fn drop(&mut self) {
-//         // 1. Release the RWLock/Latch on the frame
-//         // 2. Decrement the Pin Count in the Buffer Pool
-//         self.buffer_pool.unpin(self.frame_id);
-//     }
-// }

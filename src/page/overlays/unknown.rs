@@ -5,7 +5,7 @@ use crate::{
     page::{UberPageHeader, overlays},
 };
 
-pub struct UnusedPage<T> {
+pub struct UnknownPage<T> {
     data: T,
 }
 
@@ -13,7 +13,7 @@ pub enum Error {
     ConvertError(overlays::common::ConvertError),
 }
 
-impl<T> UnusedPage<T>
+impl<T> UnknownPage<T>
 where
     T: AsRef<[u8]>,
 {
@@ -36,7 +36,7 @@ where
     }
 }
 
-impl<T> UnusedPage<T>
+impl<T> UnknownPage<T>
 where
     T: AsMut<[u8]> + AsRef<[u8]>,
 {
