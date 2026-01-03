@@ -6,7 +6,7 @@ use crate::{
     page::{UberPageHeader, overlays},
 };
 
-pub struct TablePage<T> {
+pub struct HeapPage<T> {
     data: T,
 }
 
@@ -37,14 +37,14 @@ const UBER_HEADER_SIZE: usize = size_of::<UberPageHeader>();
 const PAGE_HEADER_SIZE: usize = size_of::<Header>();
 const HEADERS_SIZE: usize = UBER_HEADER_SIZE + PAGE_HEADER_SIZE;
 
-impl<T> TablePage<T>
+impl<T> HeapPage<T>
 where
     T: AsRef<[u8]>,
 {
     pub fn new(data: T) -> Self {
         if data.as_ref().len() != PAGE_BUF_SIZE {
             panic!(
-                "TablePage new called with buffer of size {} (expected {})",
+                "HeapPage new called with buffer of size {} (expected {})",
                 data.as_ref().len(),
                 PAGE_BUF_SIZE
             );
@@ -104,7 +104,7 @@ where
     }
 }
 
-impl<T> TablePage<T>
+impl<T> HeapPage<T>
 where
     T: AsMut<[u8]> + AsRef<[u8]>,
 {

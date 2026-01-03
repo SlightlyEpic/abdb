@@ -1,16 +1,17 @@
-use crate::common::aliases;
+use std::sync::Arc;
 
-#[derive(Clone, Copy, Debug)]
+use futures::io;
+
+use crate::common::aliases::{PhysicalId, FileId};
+
+#[derive(Clone, Debug)]
 pub enum Error {
-    // TODO: Page Allocator errors
+    IOError(Arc<io::Error>)
 }
 
 pub type Result<V> = std::result::Result<V, Error>;
 
 pub trait PageAllocator: Send + Sync + 'static {
-    fn new_page(&self) -> impl Future<Output = Result<aliases::PhysicalId>> + '_ + Send;
-    fn delete_page(
-        &self,
-        physical_id: aliases::PhysicalId,
-    ) -> impl Future<Output = Result<()>> + '_ + Send;
+    fn allocate(&self, file_id: FileId) -> impl Future<Output = Result<PhysicalId>> + Send;
+    fn deallocate(&self, physical_id: PhysicalId) -> impl Future<Output = Result<()>> + Send;
 }

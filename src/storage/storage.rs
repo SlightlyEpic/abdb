@@ -22,10 +22,25 @@ pub trait Storage: Send + Sync + 'static {
         id: aliases::PageId,
         target: &'a mut aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
     fn write_page<'a>(
         &self,
         id: aliases::PageId,
         target: &'a aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn read_page_at_loc<'a>(
+        &self,
+        loc: aliases::PhysicalId,
+        target: &'a mut aliases::PageBuffer,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn write_page_at_loc<'a>(
+        &self,
+        loc: aliases::PhysicalId,
+        target: &'a aliases::PageBuffer,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    
     fn new_page<'a>(&self) -> impl Future<Output = Result<aliases::PageId>> + '_ + Send;
 }

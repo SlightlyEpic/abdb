@@ -1,9 +1,9 @@
 use crate::common::constants::PAGE_BUF_SIZE;
-pub struct DirectoryLeafPage<T> {
+pub struct HeapFileHeaderPage<T> {
     data: T,
 }
 
-impl<T> DirectoryLeafPage<T>
+impl<T> HeapFileHeaderPage<T>
 where
     T: AsRef<[u8]>,
 {
@@ -19,4 +19,4 @@ where
     }
 }
 
-impl<T> DirectoryLeafPage<T> where T: AsMut<[u8]> {}
+impl<T> HeapFileHeaderPage<T> where T: AsMut<[u8]> {}

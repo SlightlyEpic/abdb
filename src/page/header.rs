@@ -5,12 +5,14 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 #[repr(u8)]
 pub enum PageType {
     Unused = 0,
-    TablePage = 1, // Table data heap page
+    HeapPage = 1, // Table data
     BTreeInner = 2,
     BTreeLeaf = 3,
-    DirectoryZero = 64,
-    DirectoryInner = 65,
-    DirectoryLeaf = 66,
+    HeapFileHeader = 32,
+    IndexFileHeader = 33,
+    DirectoryFileHeader = 34,
+    DirectoryInner = 64,
+    DirectoryLeaf = 65,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,12 +30,14 @@ impl TryFrom<u8> for PageType {
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         match v {
             0 => Ok(Self::Unused),
-            1 => Ok(Self::TablePage),
+            1 => Ok(Self::HeapPage),
             2 => Ok(Self::BTreeInner),
             3 => Ok(Self::BTreeLeaf),
-            64 => Ok(Self::DirectoryZero),
-            65 => Ok(Self::DirectoryInner),
-            66 => Ok(Self::DirectoryLeaf),
+            32 => Ok(Self::HeapFileHeader),
+            33 => Ok(Self::IndexFileHeader),
+            34 => Ok(Self::DirectoryFileHeader),
+            64 => Ok(Self::DirectoryInner),
+            65 => Ok(Self::DirectoryLeaf),
             _ => Err(InvalidPageTypeError(v)),
         }
     }

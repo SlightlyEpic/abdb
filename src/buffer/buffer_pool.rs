@@ -43,6 +43,16 @@ pub trait BufferPool: Send + Sync + 'static {
         page_id: aliases::PageId,
     ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
 
+    fn fetch_page_at_loc_write(
+        &self,
+        loc: aliases::PhysicalId,
+    ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
+
+    fn fetch_page_at_loc_read(
+        &self,
+        loc: aliases::PhysicalId,
+    ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
+
     fn new_page(&self) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
 
     fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send;

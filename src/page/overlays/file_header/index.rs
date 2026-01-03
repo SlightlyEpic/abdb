@@ -1,9 +1,9 @@
 use crate::common::constants::PAGE_BUF_SIZE;
-pub struct DirectoryZeroPage<T> {
+pub struct IndexFileHeaderPage<T> {
     data: T,
 }
 
-impl<T> DirectoryZeroPage<T>
+impl<T> IndexFileHeaderPage<T>
 where
     T: AsRef<[u8]>,
 {
@@ -19,4 +19,4 @@ where
     }
 }
 
-impl<T> DirectoryZeroPage<T> where T: AsMut<[u8]> {}
+impl<T> IndexFileHeaderPage<T> where T: AsMut<[u8]> {}
