@@ -14,7 +14,7 @@ pub enum Error {
 
 pub type Result<V> = std::result::Result<V, Error>;
 
-pub trait Storage: Send + Sync + 'static {
+pub trait DiskManager: Send + Sync + 'static {
     type Error: std::fmt::Debug;
 
     fn read_page<'a>(

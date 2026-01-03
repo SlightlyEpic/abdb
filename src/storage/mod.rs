@@ -1,5 +1,5 @@
-mod storage;
-pub use storage::*;
+mod disk;
+pub use disk::*;
 
 pub mod allocator;
 pub mod directory;
