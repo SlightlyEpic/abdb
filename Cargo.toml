@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 futures = "0.3.31"
+sqlparser = "0.60.0"
 zerocopy = { version = "0.8.31", features = ["derive"] }
