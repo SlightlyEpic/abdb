@@ -5,8 +5,5 @@ pub mod common;
 pub mod optimizer;
 pub mod page;
 pub mod planner;
-pub mod buffer;
-pub mod common;
-pub mod page;
 pub mod storage;
 pub mod wal;
