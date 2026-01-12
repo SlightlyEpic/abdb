@@ -3,7 +3,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{
-        aliases::{DirPageId, FileId, Lsn, LPageId, TxnId},
+        aliases::{DirPageId, FileId, LPageId, Lsn, TxnId},
         constants::PAGE_BUF_SIZE,
     },
     page::{UberPageHeader, overlays},

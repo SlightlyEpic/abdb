@@ -1,4 +1,7 @@
-use crate::{buffer, catalog, common::{aliases, txn::Txn}};
+use crate::{
+    buffer, catalog,
+    common::{aliases, txn::Txn},
+};
 
 pub enum Error {
     BufferError(buffer::Error),
@@ -15,11 +18,7 @@ pub trait Accessor: Send + Sync + 'static {
     type IndexIterator: super::IndexIterator;
     type Buffer: buffer::BufferPool;
 
-    fn table_scan(
-        &self,
-        txn: Txn,
-        table_oid: aliases::OId,
-    ) -> Result<Self::TableIterator>;
+    fn table_scan(&self, txn: Txn, table_oid: aliases::OId) -> Result<Self::TableIterator>;
     fn table_insert(
         &self,
         txn: Txn,
@@ -65,7 +64,7 @@ pub trait Accessor: Send + Sync + 'static {
         txn: Txn,
         index_oid: aliases::OId,
         key: Vec<u8>,
-        rid: aliases::RecordId, 
+        rid: aliases::RecordId,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
 
     // The accessor will ensure that all catalog pages are always held in memory

@@ -1,5 +1,9 @@
 use crate::{
-    common::{aliases, txn::Txn}, storage::{disk, objects::{index, table}}
+    common::{aliases, txn::Txn},
+    storage::{
+        disk,
+        objects::{index, table},
+    },
 };
 
 pub enum StorageError {
@@ -12,7 +16,7 @@ pub enum StorageError {
 pub trait Storage: Send + Sync + 'static {
     type Table: table::Table;
     type Index: index::Index;
-    
+
     fn get_table(
         &self,
         txn: Txn,

@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::{catalog, databox::DataType};
+use std::collections::HashMap;
 
 pub const HEADER_SIZE: u16 = 16; // u64 XMIN + u64 XMAX
 pub const VAR_PTR_SIZE: u16 = 4; // u16 length + u16 offset
@@ -22,7 +22,7 @@ impl From<Vec<catalog::Column>> for TupleLayout {
 
         let null_bitmap_offset = HEADER_SIZE;
         let null_bitmap_len = (count + 7) / 8;
-        
+
         let mut current_offset = null_bitmap_offset + null_bitmap_len;
         let mut offsets = HashMap::new();
 

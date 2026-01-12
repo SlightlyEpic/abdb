@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
+use super::{Column, Table};
 use crate::{common::constants, databox::DataType};
-use super::{Table, Column};
 
 pub const SYS_TABLE_TABLES: Table = Table {
     oid: constants::SYS_TABLE_TABLES_OID,

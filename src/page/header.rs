@@ -1,4 +1,4 @@
-use crate::common::aliases::{Lsn, LPageId};
+use crate::common::aliases::{LPageId, Lsn};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -38,4 +38,3 @@ pub type DirPageId = u32;
 pub type TxnId = u64;
 
 pub type OId = u32;
-
