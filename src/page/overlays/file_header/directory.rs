@@ -16,7 +16,6 @@ pub struct DirectoryFileHeaderPage<T> {
 #[repr(C)]
 pub struct Data {
     pub magic: [u8; 4],
-    _pad: [u8; 4],
     pub next_page_id: LPageId,
     pub dir_root_page: DirPageId,
     pub next_file_id: FileId,

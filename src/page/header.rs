@@ -48,10 +48,10 @@ impl TryFrom<u8> for PageType {
 #[derive(Debug, Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct UberPageHeader {
-    pub page_id: LPageId,  // 8 bytes (u64)
     pub page_lsn: Lsn,    // 8 bytes (u64)
+    pub page_id: LPageId, // 4 bytes (u32)
     pub page_type_id: u8, // 1 byte
-    pub _pad: [u8; 7],    // 7 bytes
+    _pad: [u8; 3],        // 3 bytes
 }
 
 pub const PAGE_ID_OFFSET: usize = 0;
