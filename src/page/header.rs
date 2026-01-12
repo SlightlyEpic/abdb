@@ -1,4 +1,4 @@
-use crate::common::aliases::{Lsn, PageId};
+use crate::common::aliases::{Lsn, LPageId};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +48,7 @@ impl TryFrom<u8> for PageType {
 #[derive(Debug, Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct UberPageHeader {
-    pub page_id: PageId,  // 8 bytes (u64)
+    pub page_id: LPageId,  // 8 bytes (u64)
     pub page_lsn: Lsn,    // 8 bytes (u64)
     pub page_type_id: u8, // 1 byte
     pub _pad: [u8; 7],    // 7 bytes

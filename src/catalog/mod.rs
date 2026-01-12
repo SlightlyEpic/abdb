@@ -1,4 +1,4 @@
-#[derive(Debug)]
-pub struct Catalog {
-    // placeholder
-}
+mod catalog;
+pub use catalog::*;
+
+pub mod schema;

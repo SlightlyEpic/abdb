@@ -10,19 +10,19 @@ pub type Result<V> = std::result::Result<V, Error>;
 pub trait PageDirectory: Send + Sync + 'static {
     fn lookup(
         &self,
-        page_id: aliases::PageId,
-    ) -> impl Future<Output = Result<aliases::PhysicalId>> + '_ + Send;
+        page_id: aliases::LPageId,
+    ) -> impl Future<Output = Result<aliases::PPageId>> + '_ + Send;
     fn add_page(
         &self,
-        page_id: aliases::PageId,
-        physical_id: aliases::PhysicalId,
+        page_id: aliases::LPageId,
+        physical_id: aliases::PPageId,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
     fn update_page(
         &self,
-        page_id: aliases::PageId,
-        physical_id: aliases::PhysicalId,
+        page_id: aliases::LPageId,
+        physical_id: aliases::PPageId,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
-    fn delete_page(&self, page_id: aliases::PageId)
+    fn delete_page(&self, page_id: aliases::LPageId)
     -> impl Future<Output = Result<()>> + '_ + Send;
 
     /// Force flush changes to disk

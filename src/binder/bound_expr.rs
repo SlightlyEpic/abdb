@@ -1,25 +1,3 @@
-// hmm not sure if this should be the same as what storage uses
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DataType {
-    I32,
-    U32,
-    F32,
-    VarChar(usize),
-    Bool,
-    // todo
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-    I32(i32),
-    U32(u32),
-    F32(f32),
-    VarChar(String),
-    Bool(bool),
-    Null,
-    // todo
-}
-
 #[derive(Debug, Clone)]
 pub enum BoundExpr {
     Constant {

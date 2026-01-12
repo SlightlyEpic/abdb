@@ -68,10 +68,10 @@ where
 
     pub fn free_space_remaining(&self) -> Result<usize, Error> {
         let header = self.header()?;
-        
+
         let slots_end = HEADERS_SIZE + (header.num_slots as usize * size_of::<Slot>());
         let data_start = header.data_offset as usize;
-        
+
         // If data_start < slots_end, page is corrupted or full
         Ok(data_start.saturating_sub(slots_end))
     }
@@ -80,12 +80,13 @@ where
         let header = self.header()?;
         let count = header.num_slots as usize;
 
-        let (physical_slots, _) = <[Slot]>::ref_from_prefix(
-            &self.data.as_ref()[HEADERS_SIZE..]
-        ).map_err(overlays::common::ConvertError::from)
-         .map_err(Error::ConvertError)?;
+        let (physical_slots, _) = <[Slot]>::ref_from_prefix(&self.data.as_ref()[HEADERS_SIZE..])
+            .map_err(overlays::common::ConvertError::from)
+            .map_err(Error::ConvertError)?;
 
-        physical_slots.get(..count).ok_or(Error::Corruption("num_slots is possibly corrupted".to_owned()))
+        physical_slots.get(..count).ok_or(Error::Corruption(
+            "num_slots is possibly corrupted".to_owned(),
+        ))
     }
 
     pub fn get_slot(&self, idx: usize) -> Result<&Slot, Error> {
@@ -96,11 +97,16 @@ where
     pub fn get_data(&self, idx: usize) -> Result<&[u8], Error> {
         let slots = self.slot_array()?;
         let slot = slots.get(idx).ok_or(Error::InvalidIndex(idx))?;
-        
+
         let start = slot.offset as usize;
         let end = start + slot.length as usize;
-        
-        self.data.as_ref().get(start..end).ok_or(Error::Corruption(format!("slot[{idx}] is possibly corrupted")))
+
+        self.data
+            .as_ref()
+            .get(start..end)
+            .ok_or(Error::Corruption(format!(
+                "slot[{idx}] is possibly corrupted"
+            )))
     }
 }
 
@@ -125,7 +131,7 @@ where
     pub fn init(&mut self) -> Result<(), Error> {
         let header = self.header_mut()?;
         header.num_slots = 0;
-        header.data_offset = PAGE_BUF_SIZE as u16; 
+        header.data_offset = PAGE_BUF_SIZE as u16;
         Ok(())
     }
 
@@ -133,12 +139,14 @@ where
         let header = self.header()?;
         let count = header.num_slots as usize;
 
-        let (physical_slots, _) = <[Slot]>::mut_from_prefix(
-            &mut self.data.as_mut()[HEADERS_SIZE..]
-        ).map_err(overlays::common::ConvertError::from)
-         .map_err(Error::ConvertError)?;
+        let (physical_slots, _) =
+            <[Slot]>::mut_from_prefix(&mut self.data.as_mut()[HEADERS_SIZE..])
+                .map_err(overlays::common::ConvertError::from)
+                .map_err(Error::ConvertError)?;
 
-        physical_slots.get_mut(..count).ok_or(Error::Corruption("num_slots is possibly corrupted".to_owned()))
+        physical_slots.get_mut(..count).ok_or(Error::Corruption(
+            "num_slots is possibly corrupted".to_owned(),
+        ))
     }
 
     pub fn get_slot_mut(&mut self, idx: usize) -> Result<&mut Slot, Error> {
@@ -148,23 +156,28 @@ where
 
     pub fn get_data_mut(&mut self, idx: usize) -> Result<&mut [u8], Error> {
         let slot = self.get_slot_mut(idx)?;
-        
+
         let start = slot.offset as usize;
         let end = start + slot.length as usize;
-        
-        self.data.as_mut().get_mut(start..end).ok_or(Error::Corruption(format!("slot[{idx}] is possibly corrupted")))
+
+        self.data
+            .as_mut()
+            .get_mut(start..end)
+            .ok_or(Error::Corruption(format!(
+                "slot[{idx}] is possibly corrupted"
+            )))
     }
 
     /// Returns the index of the inserted tuple.
     pub fn insert(&mut self, tuple_data: &[u8]) -> Result<u16, Error> {
         let needed_space = tuple_data.len() + size_of::<Slot>();
-        
+
         if self.free_space_remaining()? < needed_space {
             return Err(Error::NoSpace);
         }
 
         let header = self.header_mut()?;
-        
+
         // Write data
         let slot_idx = header.num_slots;
         let new_data_offset = header.data_offset - tuple_data.len() as u16;
@@ -180,7 +193,7 @@ where
 
         // Write slot
         let slot = self.get_slot_mut(slot_idx as usize)?;
-        
+
         slot.offset = new_data_offset;
         slot.length = tuple_data.len() as u16;
 
@@ -197,8 +210,8 @@ where
         }
 
         let slot = self.get_slot_mut(slot_idx)?;
-        slot.length = 0; 
-        
+        slot.length = 0;
+
         Ok(())
     }
 }
