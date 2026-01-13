@@ -14,7 +14,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-// Probably try to remove the associated types later
 pub trait Accessor: Send + Sync + 'static {
     fn table_scan(
         &self,

@@ -24,6 +24,15 @@ pub trait BufferPool: Send + Sync + 'static {
     where
         Self: 'a;
 
+    fn load_page_as_unevictable(
+        &self,
+        page_id: aliases::LPageId,
+    ) -> impl Future<Output = ()> + Send;
+    fn load_page_loc_as_unevictable(
+        &self,
+        loc: aliases::PPageId,
+    ) -> impl Future<Output = ()> + Send;
+
     /// Fetches a page for WRITING.
     /// 1. Checks if page is in memory.
     /// 2. If not, reads from Storage (Async I/O).
