@@ -14,8 +14,6 @@ pub enum Error {
 pub type Result<V> = std::result::Result<V, Error>;
 
 pub trait BufferPool: Send + Sync + 'static {
-    type Error: std::fmt::Debug;
-
     // The RAII guard for reading (Shared Latch)
     type ReadGuard<'a>: PageReadGuard
     where

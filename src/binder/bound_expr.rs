@@ -1,3 +1,5 @@
+use crate::databox::{DataType, Value};
+
 #[derive(Debug, Clone)]
 pub enum BoundExpr {
     Constant {
