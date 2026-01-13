@@ -3,7 +3,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{
-        aliases::{DirPageId, FileId, LPageId, Lsn, TxnId},
+        aliases::{self, DirPageId, FileId, LPageId, Lsn, TxnId},
         constants::PAGE_BUF_SIZE,
     },
     page::{UberPageHeader, overlays},
@@ -15,12 +15,13 @@ pub struct DirectoryFileHeaderPage<T> {
 #[derive(Debug, Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable)]
 #[repr(C)]
 pub struct Data {
-    pub magic: [u8; 4],
+    pub magic: [u8; 8],
+    pub next_tx_id: TxnId,
+    pub last_checkpoint_lsn: Lsn,
     pub next_page_id: LPageId,
     pub dir_root_page: DirPageId,
     pub next_file_id: FileId,
-    pub next_tx_id: TxnId,
-    pub last_checkpoint_lsn: Lsn,
+    _pad: [u8; 4],
 }
 
 pub enum Error {

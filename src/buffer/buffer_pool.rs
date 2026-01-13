@@ -14,8 +14,6 @@ pub enum Error {
 pub type Result<V> = std::result::Result<V, Error>;
 
 pub trait BufferPool: Send + Sync + 'static {
-    type Error: std::fmt::Debug;
-
     // The RAII guard for reading (Shared Latch)
     type ReadGuard<'a>: PageReadGuard
     where
@@ -25,6 +23,15 @@ pub trait BufferPool: Send + Sync + 'static {
     type WriteGuard<'a>: PageWriteGuard
     where
         Self: 'a;
+
+    fn load_page_as_unevictable(
+        &self,
+        page_id: aliases::LPageId,
+    ) -> impl Future<Output = ()> + Send;
+    fn load_page_loc_as_unevictable(
+        &self,
+        loc: aliases::PPageId,
+    ) -> impl Future<Output = ()> + Send;
 
     /// Fetches a page for WRITING.
     /// 1. Checks if page is in memory.

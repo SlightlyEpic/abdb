@@ -1,4 +1,6 @@
-use super::{BoundExpr, DataType};
+use crate::databox::DataType;
+
+use super::BoundExpr;
 
 #[derive(Debug, Clone)]
 pub struct ColumnDef {

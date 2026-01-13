@@ -1,13 +1,12 @@
-use crate::catalog::Catalog;
-use crate::planner::plan_nodes::*;
+use crate::{accessor::Accessor, planner::plan_nodes::*};
 
-pub struct Optimizer<'a> {
-    catalog: &'a Catalog,
+pub struct Optimizer<'a, A: Accessor> {
+    accessor: &'a A,
 }
 
-impl<'a> Optimizer<'a> {
-    pub fn new(catalog: &'a Catalog) -> Self {
-        Self { catalog }
+impl<'a, A: Accessor> Optimizer<'a, A> {
+    pub fn new(accessor: &'a A) -> Self {
+        Self { accessor }
     }
 
     pub fn optimize(&self, plan: PlanNode) -> PlanNode {

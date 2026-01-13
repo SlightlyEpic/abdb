@@ -1,5 +1,6 @@
-use super::{BoundExpr, BoundSelect, BoundStatement, BoundTableRef, DataType};
-use crate::catalog::Catalog;
+use crate::{accessor::Accessor, databox::DataType};
+
+use super::{BoundExpr, BoundSelect, BoundStatement, BoundTableRef};
 use sqlparser::ast;
 
 #[derive(Debug, Clone)]
@@ -13,8 +14,8 @@ pub enum BindError {
     // todo
 }
 
-pub struct Binder<'a> {
-    catalog: &'a Catalog,
+pub struct Binder<'a, A: Accessor> {
+    accessor: &'a A,
     table_scope: Vec<TableScope>,
 }
 
@@ -25,8 +26,8 @@ struct TableScope {
     columns: Vec<(String, DataType)>,
 }
 
-impl<'a> Binder<'a> {
-    pub fn new(catalog: &'a Catalog) -> Self {
+impl<'a, A: Accessor> Binder<'a, A> {
+    pub fn new(catalog: &'a A) -> Self {
         todo!()
     }
 

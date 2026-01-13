@@ -1,3 +1,5 @@
+use futures::Stream;
+
 use crate::{
     buffer, catalog,
     common::{aliases, txn::Txn},
@@ -12,13 +14,12 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-// Probably try to remove the associated types later
 pub trait Accessor: Send + Sync + 'static {
-    type TableIterator: super::TableIterator;
-    type IndexIterator: super::IndexIterator;
-    type Buffer: buffer::BufferPool;
-
-    fn table_scan(&self, txn: Txn, table_oid: aliases::OId) -> Result<Self::TableIterator>;
+    fn table_scan(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+    ) -> impl Future<Output = Result<impl Stream<Item = (Vec<u8>, aliases::RecordId)> + Send>> + '_ + Send;
     fn table_insert(
         &self,
         txn: Txn,
@@ -44,7 +45,7 @@ pub trait Accessor: Send + Sync + 'static {
         index_oid: aliases::OId,
         start_key: Option<Vec<u8>>,
         end_key: Option<Vec<u8>>,
-    ) -> Result<Self::IndexIterator>;
+    ) -> impl Future<Output = Result<impl Stream<Item = (Vec<u8>, aliases::RecordId)> + Send>> + Send;
     fn index_insert(
         &self,
         txn: Txn,
@@ -70,29 +71,15 @@ pub trait Accessor: Send + Sync + 'static {
     // The accessor will ensure that all catalog pages are always held in memory
     // So catalog operations should essentially be O(1)
 
-    fn catalog_get_table_by_name(
-        &self,
-        txn: Txn,
-        table_name: String,
-    ) -> impl Future<Output = Result<catalog::Table>> + '_ + Send;
-    fn catalog_get_table_by_oid(
-        &self,
-        txn: Txn,
-        table_oid: aliases::OId,
-    ) -> impl Future<Output = Result<catalog::Table>> + '_ + Send;
-    fn catalog_get_index_by_name(
-        &self,
-        txn: Txn,
-        index_name: String,
-    ) -> impl Future<Output = Result<catalog::Index>> + '_ + Send;
-    fn catalog_get_index_by_oid(
-        &self,
-        txn: Txn,
-        index_oid: aliases::OId,
-    ) -> impl Future<Output = Result<catalog::Index>> + '_ + Send;
+    fn catalog_get_table_by_name(&self, txn: Txn, table_name: String) -> Result<catalog::Table>;
+    fn catalog_get_table_by_oid(&self, txn: Txn, table_oid: aliases::OId)
+    -> Result<catalog::Table>;
+    fn catalog_get_index_by_name(&self, txn: Txn, index_name: String) -> Result<catalog::Index>;
+    fn catalog_get_index_by_oid(&self, txn: Txn, index_oid: aliases::OId)
+    -> Result<catalog::Index>;
     fn catalog_get_table_columns(
         &self,
         txn: Txn,
         table_oid: aliases::OId,
-    ) -> impl Future<Output = Result<Vec<catalog::Column>>> + '_ + Send;
+    ) -> Result<Vec<catalog::Column>>;
 }

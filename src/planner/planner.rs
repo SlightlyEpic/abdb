@@ -1,6 +1,8 @@
 use super::plan_nodes::*;
-use crate::binder::{BoundExpr, BoundSelect, BoundStatement, BoundTableRef};
-use crate::catalog::Catalog;
+use crate::{
+    accessor::Accessor,
+    binder::{BoundExpr, BoundSelect, BoundStatement, BoundTableRef},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum PlanError {
@@ -12,13 +14,13 @@ pub enum PlanError {
     SchemaError,
 }
 
-pub struct Planner<'a> {
-    catalog: &'a Catalog,
+pub struct Planner<'a, A: Accessor> {
+    accessor: &'a A,
 }
 
-impl<'a> Planner<'a> {
-    pub fn new(catalog: &'a Catalog) -> Self {
-        Self { catalog }
+impl<'a, A: Accessor> Planner<'a, A> {
+    pub fn new(accessor: &'a A) -> Self {
+        Self { accessor }
     }
 
     pub fn plan(&self, stmt: &BoundStatement) -> Result<PlanNode, PlanError> {

@@ -1,4 +1,7 @@
-use crate::binder::{BoundExpr, ColumnDef, DataType, JoinType};
+use crate::{
+    binder::{BoundExpr, ColumnDef, JoinType},
+    databox::DataType,
+};
 
 #[derive(Debug, Clone)]
 pub struct Schema {
