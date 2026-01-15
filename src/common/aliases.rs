@@ -16,20 +16,20 @@ pub type FileId = u32;
 
 /// Physical Page Id
 /// Points to an aligned offset in a file
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PPageId {
     pub file: FileId,
     pub offset: u64,
 }
 
 /// Points to a logical tuple
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RecordId {
     pub page_id: LPageId,
     pub slot_id: SlotId,
 }
 
-pub type PageBuffer = [u8; constants::PAGE_BUF_SIZE];
+pub type PageBuffer = [u8];
 
 /// Directory Page Id
 /// Offset = DirPageId * PAGE_SIZE

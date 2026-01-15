@@ -19,7 +19,7 @@ pub trait DiskManager: Send + Sync + 'static {
         &self,
         id: aliases::LPageId,
         target: &'a mut aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send;
+    ) -> impl Future<Output = Result<aliases::PPageId>> + '_ + Send;
 
     fn write_page<'a>(
         &self,
@@ -40,5 +40,4 @@ pub trait DiskManager: Send + Sync + 'static {
     ) -> impl Future<Output = Result<()>> + '_ + Send;
 
     fn new_page(&self) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
-    fn num_pages(&self) -> impl Future<Output = Result<u32>> + '_ + Send;
 }
