@@ -9,6 +9,8 @@ pub trait PageWriteGuard: DerefMut<Target = aliases::PageBuffer> + Send {
     /// This must be called before the guard is dropped if modifications were made.
     /// It ensures the WAL invariant: DataLSN <= LogLSN.
     fn commit_wal(&mut self, lsn: aliases::Lsn) -> impl Future<Output = super::Result<()>>;
+
+    fn mark_dirty(&mut self) -> super::Result<()>;
 }
 
 // impl<'a> Drop for WriteGuard<'a> {
