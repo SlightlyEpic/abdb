@@ -178,49 +178,52 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         page_id: aliases::LPageId,
     ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'static>>> + Send {
         async move {
-            // Check if already loaded
-            {
+            let (frame_idx, is_loaded) = {
                 let frame_lpage_id_map = self.frame_lpage_id_map_read();
-                if (frame_lpage_id_map.contains_key(&page_id)) {
+                match frame_lpage_id_map.get(&page_id) {
+                    Some(&frame_idx) => (frame_idx, true),
+                    None => {
+                        let num_vacant_frames = {
+                            let lock = self.vacant_frames_read();
+                            lock.capacity()
+                        };
+                        if num_vacant_frames == 0 {
+                            self.evict()?
+                        }
 
+                        let vacant_idx = {
+                            let mut lock = self.vacant_frames_write();
+                            let idx = lock.iter().next().cloned().unwrap();
+                            lock.remove(&idx);
+                            idx
+                        };
+
+                        (vacant_idx, false)
+                    }
                 }
-            }
-
-            // If not loaded
-            let num_vacant_frames = {
-                let lock = self.vacant_frames_read();
-                lock.capacity()
-            };
-            if num_vacant_frames == 0 {
-                self.evict()?
-            }
-
-            let vacant_idx = {
-                let mut lock = self.vacant_frames_write();
-                let idx = lock.iter().next().cloned().unwrap();
-                lock.remove(&idx);
-                idx
             };
 
-            self.incr_pin(vacant_idx);
+            self.incr_pin(frame_idx);
 
-            let frame_slice = unsafe { self.frame_buf_mut(vacant_idx) };
-            let latch = self.frame_latches[vacant_idx].blocking_read();
+            let frame_slice = unsafe { self.frame_buf_mut(frame_idx) };
+            let latch = self.frame_latches[frame_idx].blocking_read();
 
             let ppage_id = self.disk_manager
                 .read_page(page_id, frame_slice).await
                 .map_err(|e| buffer::Error::StorageError(e))?;
 
-            self.frame_meta_write()[vacant_idx] = FrameMeta::Loaded {
-                lpage_id: page_id,
-                ppage_id: ppage_id,
-                dirty: false,
-            };
-            self.frame_lpage_id_map_write().insert(page_id, vacant_idx);
-            self.frame_ppage_id_map_write().insert(ppage_id, vacant_idx);
+            if !is_loaded {
+                self.frame_meta_write()[frame_idx] = FrameMeta::Loaded {
+                    lpage_id: page_id,
+                    ppage_id: ppage_id,
+                    dirty: false,
+                };
+                self.frame_lpage_id_map_write().insert(page_id, frame_idx);
+                self.frame_ppage_id_map_write().insert(ppage_id, frame_idx);
+            }
 
             Ok(PageReadGuard::new(
-                vacant_idx, 
+                frame_idx, 
                 frame_slice, 
                 self,
                 latch,
