@@ -98,11 +98,11 @@ impl<D: DiskManager> BufferPool<D> {
 
     /* #endregion */
 
-    fn incr_pin(&self, frame_idx: usize) {
+    pub fn incr_pin(&self, frame_idx: usize) {
         self.pin_counts[frame_idx].fetch_add(1, Ordering::SeqCst);
     }
 
-    fn decr_pin(&self, frame_idx: usize) {
+    pub fn decr_pin(&self, frame_idx: usize) {
         self.pin_counts[frame_idx].fetch_sub(1, Ordering::SeqCst);
     }
     
@@ -208,9 +208,22 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
             let frame_slice = unsafe { self.frame_buf_mut(frame_idx) };
             let latch = self.frame_latches[frame_idx].blocking_read();
 
-            let ppage_id = self.disk_manager
-                .read_page(page_id, frame_slice).await
-                .map_err(|e| buffer::Error::StorageError(e))?;
+            let ppage_id = if is_loaded {
+                let guard = self.frame_meta.read()
+                    .map_err(|_| buffer::Error::SomeoneFuckedUp("frame_meta lock poisoned".to_string()))?;
+
+                let meta = guard.get(frame_idx)
+                    .expect(format!("frame_meta[{}] was not present in vector", frame_idx).as_str());
+
+                match meta {
+                    FrameMeta::Vacant => return Err(buffer::Error::SomeoneFuckedUp(format!("frame_meta[{}] was not loaded", frame_idx))),
+                    FrameMeta::Loaded { ppage_id, .. } => *ppage_id
+                }
+            } else {
+                self.disk_manager
+                    .read_page(page_id, frame_slice).await
+                    .map_err(|e| buffer::Error::StorageError(e))?
+            };
 
             if !is_loaded {
                 self.frame_meta_write()[frame_idx] = FrameMeta::Loaded {

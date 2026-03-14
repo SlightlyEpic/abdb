@@ -10,6 +10,7 @@ pub enum Error {
     WALError(wal::Error),
     StorageError(storage::DiskError),
     EvictorError(evictor::Error),
+    SomeoneFuckedUp(String)
 }
 
 pub type Result<V> = std::result::Result<V, Error>;
