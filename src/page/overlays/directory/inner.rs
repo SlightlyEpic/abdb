@@ -378,24 +378,6 @@ where
             .expect("DirectoryInnerHeader must fit");
     }
 
-    // -- Mutable header accessors (read-modify-write) ------------------------
-
-    /// Read-modify-write the inner header.
-    #[inline]
-    fn update_inner_header(&mut self, f: impl FnOnce(&mut DirectoryInnerHeader)) {
-        let mut header = DirectoryInnerHeader::read_from_prefix(
-            &self.data.as_ref()[UBER_HEADER_SIZE..],
-        )
-        .expect("DirectoryInnerHeader must fit")
-        .0;
-
-        f(&mut header);
-
-        header
-            .write_to_prefix(&mut self.data.as_mut()[UBER_HEADER_SIZE..])
-            .expect("DirectoryInnerHeader must fit");
-    }
-
     #[inline]
     pub fn set_page_lsn(&mut self, lsn: u64) {
         let mut uber = UberPageHeader::read_from_prefix(self.data.as_ref())
