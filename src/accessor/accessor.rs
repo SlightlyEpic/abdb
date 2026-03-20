@@ -10,6 +10,8 @@ pub enum Error {
     TupleNonExistent,
     /// Operation Txn, Tuple XMIN, Tuple XMAX
     TupleNotVisible(aliases::TxnId, aliases::TxnId, aliases::TxnId),
+    NotFound(String),
+    PageCorruption(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
