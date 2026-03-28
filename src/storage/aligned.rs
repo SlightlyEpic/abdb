@@ -1,6 +1,6 @@
-use std::alloc::{alloc, dealloc, Layout};
-use std::ptr::NonNull;
+use std::alloc::{Layout, alloc, dealloc};
 use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
 
 pub struct AlignedBuffer {
     ptr: NonNull<u8>,
@@ -12,7 +12,7 @@ impl AlignedBuffer {
     pub fn new(len: usize) -> Self {
         let align = 4096;
         let layout = Layout::from_size_align(len, align).expect("Invalid layout");
-        
+
         let ptr = unsafe {
             let p = alloc(layout);
             if p.is_null() {

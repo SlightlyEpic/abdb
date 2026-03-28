@@ -2,16 +2,29 @@ use std::ops::{Deref, DerefMut};
 
 use crate::{
     buffer::{self, r#impl::BufferPool},
-    common::aliases, storage::DiskManager,
+    common::aliases,
+    storage::DiskManager,
 };
+
+// * Pin Guard
+
+pub struct PinGuard<'a, D: DiskManager> {
+    frame_idx: usize,
+    buffer_pool: &'a BufferPool<D>,
+}
+
+impl<'a, D: DiskManager> Drop for PinGuard<'a, D> {
+    fn drop(&mut self) {
+        self.buffer_pool.decr_pin(self.frame_idx);
+    }
+}
 
 // * Read Guard
 
 pub struct PageReadGuard<'a, D: DiskManager> {
-    frame_idx: usize,
+    pin_guard: PinGuard<'a, D>,
     page: &'a aliases::PageBuffer,
-    buffer_pool: &'static BufferPool<D>,
-    _latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
+    latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
 }
 
 impl<'a, D: DiskManager> PageReadGuard<'a, D> {
@@ -21,20 +34,15 @@ impl<'a, D: DiskManager> PageReadGuard<'a, D> {
         buffer_pool: &'static BufferPool<D>,
         latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
     ) -> Self {
-        buffer_pool.incr_pin(frame_idx);
         buffer_pool.eviction_policy.record_access(frame_idx);
         Self {
-            frame_idx,
+            pin_guard: PinGuard {
+                frame_idx,
+                buffer_pool,
+            },
             page,
-            buffer_pool,
-            _latch_guard: latch_guard,
+            latch_guard,
         }
-    }
-}
-
-impl<'a, D: DiskManager> Drop for PageReadGuard<'a, D> {
-    fn drop(&mut self) {
-        self.buffer_pool.decr_pin(self.frame_idx);
     }
 }
 
@@ -49,10 +57,9 @@ impl<'a, D: DiskManager> Deref for PageReadGuard<'a, D> {
 // * Write Guard
 
 pub struct PageWriteGuard<'a, D: DiskManager> {
-    frame_idx: usize,
+    pin_guard: PinGuard<'a, D>,
     page: &'a mut aliases::PageBuffer,
-    buffer_pool: &'static BufferPool<D>,
-    _latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
+    latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
 }
 
 impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
@@ -62,19 +69,14 @@ impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
         buffer_pool: &'static BufferPool<D>,
         latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
     ) -> Self {
-        buffer_pool.incr_pin(frame_idx);
         Self {
-            frame_idx,
+            pin_guard: PinGuard {
+                frame_idx,
+                buffer_pool,
+            },
             page,
-            buffer_pool,
-            _latch_guard: latch_guard,
+            latch_guard,
         }
-    }
-}
-
-impl<'a, D: DiskManager> Drop for PageWriteGuard<'a, D> {
-    fn drop(&mut self) {
-        self.buffer_pool.decr_pin(self.frame_idx);
     }
 }
 
@@ -94,14 +96,24 @@ impl<'a, D: DiskManager> DerefMut for PageWriteGuard<'a, D> {
 
 impl<'a, D: DiskManager> buffer::PageReadGuard for PageReadGuard<'a, D> {}
 impl<'a, D: DiskManager> buffer::PageWriteGuard for PageWriteGuard<'a, D> {
+    type PageReadGuard = PageReadGuard<'a, D>;
+
     fn commit_wal(
         &mut self,
         lsn: crate::common::aliases::Lsn,
     ) -> impl Future<Output = Result<(), buffer::Error>> {
-        self.buffer_pool.flush_wal_upto(lsn)
+        self.pin_guard.buffer_pool.flush_wal_upto(lsn)
     }
 
     fn mark_dirty(&mut self) -> buffer::Result<()> {
         todo!()
+    }
+
+    fn downgrade(self) -> Self::PageReadGuard {
+        Self::PageReadGuard {
+            pin_guard: self.pin_guard,
+            page: self.page,
+            latch_guard: self.latch_guard.downgrade(),
+        }
     }
 }
