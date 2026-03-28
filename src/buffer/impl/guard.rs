@@ -9,7 +9,7 @@ use crate::{
 // * Pin Guard
 
 pub struct PinGuard<'a, D: DiskManager> {
-    frame_idx: usize,
+    pub(crate) frame_idx: usize,
     buffer_pool: &'a BufferPool<D>,
 }
 
@@ -22,9 +22,9 @@ impl<'a, D: DiskManager> Drop for PinGuard<'a, D> {
 // * Read Guard
 
 pub struct PageReadGuard<'a, D: DiskManager> {
-    pin_guard: PinGuard<'a, D>,
+    pub(crate) _pin_guard: PinGuard<'a, D>,
     page: &'a aliases::PageBuffer,
-    latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
+    _latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
 }
 
 impl<'a, D: DiskManager> PageReadGuard<'a, D> {
@@ -36,12 +36,12 @@ impl<'a, D: DiskManager> PageReadGuard<'a, D> {
     ) -> Self {
         buffer_pool.eviction_policy.record_access(frame_idx);
         Self {
-            pin_guard: PinGuard {
+            _pin_guard: PinGuard {
                 frame_idx,
                 buffer_pool,
             },
             page,
-            latch_guard,
+            _latch_guard: latch_guard,
         }
     }
 }
@@ -57,9 +57,9 @@ impl<'a, D: DiskManager> Deref for PageReadGuard<'a, D> {
 // * Write Guard
 
 pub struct PageWriteGuard<'a, D: DiskManager> {
-    pin_guard: PinGuard<'a, D>,
+    pub(crate) _pin_guard: PinGuard<'a, D>,
     page: &'a mut aliases::PageBuffer,
-    latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
+    _latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
 }
 
 impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
@@ -70,12 +70,12 @@ impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
         latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
     ) -> Self {
         Self {
-            pin_guard: PinGuard {
+            _pin_guard: PinGuard {
                 frame_idx,
                 buffer_pool,
             },
             page,
-            latch_guard,
+            _latch_guard: latch_guard,
         }
     }
 }
@@ -102,7 +102,7 @@ impl<'a, D: DiskManager> buffer::PageWriteGuard for PageWriteGuard<'a, D> {
         &mut self,
         lsn: crate::common::aliases::Lsn,
     ) -> impl Future<Output = Result<(), buffer::Error>> {
-        self.pin_guard.buffer_pool.flush_wal_upto(lsn)
+        self._pin_guard.buffer_pool.flush_wal_upto(lsn)
     }
 
     fn mark_dirty(&mut self) -> buffer::Result<()> {
@@ -111,9 +111,9 @@ impl<'a, D: DiskManager> buffer::PageWriteGuard for PageWriteGuard<'a, D> {
 
     fn downgrade(self) -> Self::PageReadGuard {
         Self::PageReadGuard {
-            pin_guard: self.pin_guard,
+            _pin_guard: self._pin_guard,
             page: self.page,
-            latch_guard: self.latch_guard.downgrade(),
+            _latch_guard: self._latch_guard.downgrade(),
         }
     }
 }

@@ -209,7 +209,7 @@ impl<D: DiskManager> BufferPool<D> {
         let start_offset = frame_idx * constants::PAGE_BUF_SIZE;
         let offset_ptr = unsafe { base_ptr.add(start_offset) };
 
-        unsafe { std::slice::from_raw_parts_mut(offset_ptr, constants::PAGE_BUF_SIZE) }
+        std::ptr::slice_from_raw_parts_mut(offset_ptr, constants::PAGE_BUF_SIZE)
     }
 
     /// SAFETY: Caller must ensure at least shared access (Read Latch) to the specific frame.
@@ -218,7 +218,7 @@ impl<D: DiskManager> BufferPool<D> {
         let start_offset = frame_idx * constants::PAGE_BUF_SIZE;
         let offset_ptr = unsafe { base_ptr.add(start_offset) };
 
-        unsafe { std::slice::from_raw_parts(offset_ptr, constants::PAGE_BUF_SIZE) }
+        std::ptr::slice_from_raw_parts(offset_ptr, constants::PAGE_BUF_SIZE)
     }
 }
 
@@ -234,10 +234,14 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         Self: 'a;
 
     fn load_page_as_unevictable(
-        &self,
+        &'static self,
         page_id: aliases::LPageId,
     ) -> impl Future<Output = ()> + Send {
-        async { todo!() }
+        async move {
+            let read_guard = self.fetch_page_read(page_id).await.unwrap();
+            // pin count will never go below 1, frame will never be evicted
+            self.incr_pin(read_guard._pin_guard.frame_idx);
+        }
     }
 
     fn load_page_loc_as_unevictable(
@@ -315,7 +319,9 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                     write_latch,
                 ))
             } else {
-                let write_latch = self.frame_latches[frame_idx].write().await;
+                let Some(write_latch) = _opt_write_latch else {
+                    panic!("write latch missing when frame was not loaded");
+                };
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
 
                 let ppage_id = self
@@ -403,11 +409,13 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
 
             if is_loaded {
                 let read_latch = self.frame_latches[frame_idx].read().await;
-                let frame_slice = unsafe { &*self.frame_buf_mut(frame_idx) };
+                let frame_slice = unsafe { &*self.frame_buf(frame_idx) };
 
                 Ok(PageReadGuard::new(frame_idx, frame_slice, self, read_latch))
             } else {
-                let write_latch = self.frame_latches[frame_idx].write().await;
+                let Some(write_latch) = _opt_write_latch else {
+                    panic!("write latch missing when frame was not loaded");
+                };
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
 
                 let ppage_id = self
