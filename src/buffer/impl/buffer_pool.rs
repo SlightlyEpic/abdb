@@ -252,7 +252,7 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         page_id: aliases::LPageId,
     ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send {
         async move {
-            let (frame_idx, is_loaded, mut opt_write_latch) = loop {
+            let (frame_idx, is_loaded, _opt_write_latch) = loop {
                 {
                     let map = self.frame_lpage_id_map.read().unwrap();
                     if let Some(&idx) = map.get(&page_id) {
@@ -344,7 +344,7 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         page_id: aliases::LPageId,
     ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'static>>> + Send {
         async move {
-            let (frame_idx, is_loaded, mut opt_write_latch) = loop {
+            let (frame_idx, is_loaded, _opt_write_latch) = loop {
                 {
                     let map = self.frame_lpage_id_map.read().unwrap();
                     if let Some(&idx) = map.get(&page_id) {
