@@ -251,7 +251,92 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         &'static self,
         page_id: aliases::LPageId,
     ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send {
-        async { todo!() }
+        async move {
+            let (frame_idx, is_loaded, mut opt_write_latch) = loop {
+                {
+                    let map = self.frame_lpage_id_map.read().unwrap();
+                    if let Some(&idx) = map.get(&page_id) {
+                        self.incr_pin(idx);
+                        break (idx, true, None);
+                    }
+                }
+
+                let vacant_idx_opt = {
+                    let mut vacant = self.vacant_frames.write().unwrap();
+                    if let Some(&idx) = vacant.iter().next() {
+                        vacant.remove(&idx);
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                };
+
+                let vacant_idx = match vacant_idx_opt {
+                    Some(idx) => idx,
+                    None => {
+                        self.evict().await?;
+                        continue;
+                    }
+                };
+
+                self.incr_pin(vacant_idx);
+
+                let write_latch = self.frame_latches[vacant_idx].write().await;
+
+                {
+                    let mut map = self.frame_lpage_id_map_write();
+
+                    if let Some(&idx) = map.get(&page_id) {
+                        // Someone else loaded it while we were evicting/yielding.
+                        self.decr_pin(vacant_idx);
+                        self.vacant_frames_write().insert(vacant_idx);
+                        // write_latch is automatically dropped here when it goes out of scope
+
+                        self.incr_pin(idx);
+                        break (idx, true, None);
+                    }
+
+                    // Safe to publish. We already hold the write_latch!
+                    map.insert(page_id, vacant_idx);
+                }
+
+                // Pass the acquired write_latch out of the loop
+                break (vacant_idx, false, Some(write_latch));
+            };
+
+            if is_loaded {
+                let write_latch = self.frame_latches[frame_idx].write().await;
+                let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
+
+                Ok(PageWriteGuard::new(frame_idx, frame_slice, self, write_latch))
+            } else {
+                let write_latch = self.frame_latches[frame_idx].write().await;
+                let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
+
+                let ppage_id = self
+                    .disk_manager
+                    .read_page(page_id, frame_slice)
+                    .await
+                    .map_err(|e| buffer::Error::StorageError(e))?;
+
+                {
+                    let mut meta = self.frame_meta.write().unwrap();
+                    meta[frame_idx] = FrameMeta::Loaded {
+                        lpage_id: page_id,
+                        ppage_id,
+                        dirty: false,
+                    };
+                }
+                {
+                    let mut ppage_map = self.frame_ppage_id_map.write().unwrap();
+                    ppage_map.insert(ppage_id, frame_idx);
+                }
+
+                let write_guard = PageWriteGuard::new(frame_idx, frame_slice, self, write_latch);
+
+                Ok(write_guard)
+            }
+        }
     }
 
     fn fetch_page_read(
