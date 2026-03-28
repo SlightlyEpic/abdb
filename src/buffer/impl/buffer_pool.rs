@@ -308,7 +308,12 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                 let write_latch = self.frame_latches[frame_idx].write().await;
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
 
-                Ok(PageWriteGuard::new(frame_idx, frame_slice, self, write_latch))
+                Ok(PageWriteGuard::new(
+                    frame_idx,
+                    frame_slice,
+                    self,
+                    write_latch,
+                ))
             } else {
                 let write_latch = self.frame_latches[frame_idx].write().await;
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
