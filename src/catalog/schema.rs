@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use super::{Column, Table};
+use super::{Column, Index, Table};
 use crate::{common::constants, databox::DataType};
 
 pub const SYS_TABLE_TABLES: Table = Table {
@@ -19,6 +19,14 @@ pub const SYS_TABLE_INDEXES: Table = Table {
     oid: constants::SYS_TABLE_INDEXES_OID,
     name: Cow::Borrowed("sys_indexes"),
     file_id: constants::SYS_TABLE_INDEXES_FID,
+};
+
+pub const SYS_INDEX_STUB: Index = Index {
+    oid: 0,
+    name: Cow::Borrowed(""),
+    table_oid: 0,
+    file_id: 0,
+    column_oid: 0,
 };
 
 pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
@@ -129,6 +137,14 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         table_oid: constants::SYS_TABLE_INDEXES_OID,
         name: Cow::Borrowed("column_oid"),
         position: 3,
+        type_id: DataType::U32,
+        nullable: false,
+    },
+    Column {
+        oid: 24,
+        table_oid: constants::SYS_TABLE_INDEXES_OID,
+        name: Cow::Borrowed("file_id"),
+        position: 4,
         type_id: DataType::U32,
         nullable: false,
     },
