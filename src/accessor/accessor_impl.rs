@@ -45,21 +45,26 @@ impl<B: BufferPool> AccessorImpl<B> {
     }
 
     /// Register a user-created table in the catalog cache.
+    ///
+    /// Returns an error if a table with the same OID is already registered.
     pub fn register_table(
         &self,
         table: catalog::Table,
         columns: Vec<catalog::Column>,
-    ) {
+    ) -> Result<()> {
         let mut cache = self.catalog.write().expect("catalog lock poisoned");
         let oid = table.oid;
-        cache.register_table(table);
+        cache.register_table(table)?;
         cache.register_columns(oid, columns);
+        Ok(())
     }
 
     /// Register a user-created index in the catalog cache.
-    pub fn register_index(&self, index: catalog::Index) {
+    ///
+    /// Returns an error if an index with the same OID is already registered.
+    pub fn register_index(&self, index: catalog::Index) -> Result<()> {
         let mut cache = self.catalog.write().expect("catalog lock poisoned");
-        cache.register_index(index);
+        cache.register_index(index)
     }
 
     /// Look up a table's file_id from the catalog cache.
@@ -88,7 +93,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         &self,
         txn: Txn,
         table_oid: aliases::OId,
-    ) -> impl Future<Output = Result<impl Stream<Item = (Vec<u8>, aliases::RecordId)> + Send>> + '_ + Send
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send
     {
         async move {
             let file_id = self.table_file_id(table_oid)?;
@@ -140,14 +145,11 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         index_oid: aliases::OId,
         start_key: Option<Vec<u8>>,
         end_key: Option<Vec<u8>>,
-    ) -> impl Future<Output = Result<impl Stream<Item = (Vec<u8>, aliases::RecordId)> + Send>> + Send
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send
     {
-        let bp = Arc::clone(&self.bp);
-        let file_id_result = self.index_file_id(index_oid);
-
         async move {
-            let file_id = file_id_result?;
-            btree::scan(bp, file_id, txn, start_key, end_key).await
+            let file_id = self.index_file_id(index_oid)?;
+            btree::scan(Arc::clone(&self.bp), file_id, txn, start_key, end_key).await
         }
     }
 

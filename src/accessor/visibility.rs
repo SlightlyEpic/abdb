@@ -55,11 +55,16 @@ pub fn is_visible(tuple: &[u8], txn: &Txn) -> bool {
     if tuple.len() < TUPLE_HEADER_SIZE {
         return false;
     }
+    let xmax = read_xmax(tuple);
     match txn.isolation {
-        IsolationLevel::ReadUncommitted => true,
+        IsolationLevel::ReadUncommitted => {
+            // Dirty reads allowed (no xmin check), but committed deletes
+            // must still be respected — a tuple with xmax <= txn.id has
+            // been deleted by a transaction that started before us.
+            xmax == 0 || xmax > txn.id
+        }
         IsolationLevel::ReadCommitted | IsolationLevel::Snapshot => {
             let xmin = read_xmin(tuple);
-            let xmax = read_xmax(tuple);
             xmin <= txn.id && (xmax == 0 || xmax > txn.id)
         }
     }
@@ -103,13 +108,45 @@ mod tests {
     }
 
     #[test]
-    fn test_read_uncommitted_always_visible() {
+    fn test_read_uncommitted_sees_uncommitted_inserts() {
+        // ReadUncommitted can see tuples created by future transactions
+        // (dirty reads) — no xmin check.
         let mut tuple = vec![0u8; 32];
-        write_xmin(&mut tuple, 100);
-        write_xmax(&mut tuple, 5);
+        write_xmin(&mut tuple, 100); // created by txn 100 (future)
+        // xmax = 0 (not deleted)
 
         let txn = Txn {
             id: 1,
+            isolation: IsolationLevel::ReadUncommitted,
+        };
+        assert!(is_visible(&tuple, &txn));
+    }
+
+    #[test]
+    fn test_read_uncommitted_respects_committed_deletes() {
+        // Even under ReadUncommitted, a tuple deleted by a transaction
+        // that started before us (xmax <= txn.id) must be invisible.
+        let mut tuple = vec![0u8; 32];
+        write_xmin(&mut tuple, 100);
+        write_xmax(&mut tuple, 5); // deleted by txn 5
+
+        let txn = Txn {
+            id: 10,
+            isolation: IsolationLevel::ReadUncommitted,
+        };
+        assert!(!is_visible(&tuple, &txn));
+    }
+
+    #[test]
+    fn test_read_uncommitted_sees_future_deletes() {
+        // Tuple deleted by a future transaction (xmax > txn.id) is still
+        // visible — the delete hasn't "happened" from our perspective.
+        let mut tuple = vec![0u8; 32];
+        write_xmin(&mut tuple, 1);
+        write_xmax(&mut tuple, 50); // deleted by txn 50 (future)
+
+        let txn = Txn {
+            id: 10,
             isolation: IsolationLevel::ReadUncommitted,
         };
         assert!(is_visible(&tuple, &txn));

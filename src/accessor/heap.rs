@@ -40,11 +40,12 @@ struct HeapScanState<B: BufferPool> {
 ///
 /// Returns a lazy async stream that fetches one page at a time from the
 /// buffer pool, extracts visible tuples, and yields them with their RecordIds.
+/// Each item is wrapped in `Result` to propagate I/O and page corruption errors.
 pub(super) async fn scan<B: BufferPool>(
     bp: Arc<B>,
     file_id: FileId,
     txn: Txn,
-) -> Result<impl Stream<Item = (Vec<u8>, RecordId)> + Send> {
+) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
     // Read file header to get page count
     let header_loc = PPageId { file: file_id, offset: 0 };
     let guard = bp
@@ -74,7 +75,7 @@ pub(super) async fn scan<B: BufferPool>(
             if state.buf_idx < state.buffered.len() {
                 let item = state.buffered[state.buf_idx].clone();
                 state.buf_idx += 1;
-                return Some((item, state));
+                return Some((Ok(item), state));
             }
 
             // Advance to next page
@@ -91,7 +92,7 @@ pub(super) async fn scan<B: BufferPool>(
             };
             let guard = match bp.fetch_page_at_loc_read(loc).await {
                 Ok(g) => g,
-                Err(_) => return None,
+                Err(e) => return Some((Err(Error::BufferError(e)), state)),
             };
             let page = HeapPage::new(&*guard);
 
@@ -100,7 +101,15 @@ pub(super) async fn scan<B: BufferPool>(
 
             let num_slots = match page.header() {
                 Ok(h) => h.num_slots,
-                Err(_) => continue,
+                Err(_) => {
+                    return Some((
+                        Err(Error::PageCorruption(format!(
+                            "heap page {} header unreadable",
+                            state.current_page
+                        ))),
+                        state,
+                    ));
+                }
             };
 
             for slot in 0..num_slots {
@@ -138,6 +147,12 @@ pub(super) async fn scan<B: BufferPool>(
 ///
 /// Prepends the MVCC header (XMIN = txn.id, XMAX = 0), then scans existing
 /// pages for free space. If none found, extends the file with a new page.
+///
+/// When allocating a new page, the file header is updated first (under a write
+/// latch) before the data page is written. This ensures a crash between the two
+/// operations leaves the header pointing at the new page (which will be empty
+/// on recovery) rather than the reverse (data written, header stale, page
+/// number reused on next insert).
 pub(super) async fn insert<B: BufferPool>(
     bp: &B,
     file_id: FileId,
@@ -188,8 +203,26 @@ pub(super) async fn insert<B: BufferPool>(
         }
     }
 
-    // No space in existing pages — allocate a new page
-    let new_page_num = num_pages + 1;
+    // No space in existing pages — allocate a new page.
+    // Update the file header FIRST to prevent crash-window corruption:
+    // if we crash after the header update but before the page write, recovery
+    // sees an empty page (benign). The reverse would reuse the page number.
+    let new_page_num = num_pages
+        .checked_add(1)
+        .ok_or_else(|| Error::CapacityExceeded("heap file num_pages overflow".into()))?;
+
+    let mut header_guard = bp
+        .fetch_page_at_loc_write(header_loc)
+        .await
+        .map_err(Error::BufferError)?;
+    let mut header_page = HeapFileHeaderPage::new(&mut *header_guard);
+    header_page
+        .data_mut()
+        .map_err(|_| Error::PageCorruption("heap file header unwritable".into()))?
+        .num_pages = new_page_num;
+    // Keep header_guard alive until after page write for atomicity
+    // (both writes are under their respective latches).
+
     let new_loc = PPageId {
         file: file_id,
         offset: new_page_num as u64 * PAGE_BUF_SIZE as u64,
@@ -211,17 +244,7 @@ pub(super) async fn insert<B: BufferPool>(
 
     drop(page);
     drop(guard);
-
-    // Update file header's page count
-    let mut header_guard = bp
-        .fetch_page_at_loc_write(header_loc)
-        .await
-        .map_err(Error::BufferError)?;
-    let mut header_page = HeapFileHeaderPage::new(&mut *header_guard);
-    header_page
-        .data_mut()
-        .map_err(|_| Error::PageCorruption("heap file header unwritable".into()))?
-        .num_pages = new_page_num;
+    drop(header_guard);
 
     // TODO: header_guard.commit_wal(lsn)
 
@@ -278,6 +301,9 @@ pub(super) async fn get<B: BufferPool>(
 ///
 /// The tuple remains physically on the page but becomes invisible to
 /// transactions with id >= txn.id.
+///
+/// Checks visibility before deleting — a transaction cannot delete a tuple
+/// it cannot see, and cannot double-delete a tuple already marked deleted.
 pub(super) async fn delete<B: BufferPool>(
     bp: &B,
     file_id: FileId,
@@ -301,6 +327,22 @@ pub(super) async fn delete<B: BufferPool>(
 
     if data.is_empty() || data.len() < visibility::TUPLE_HEADER_SIZE {
         return Err(Error::TupleNonExistent);
+    }
+
+    // Check that the tuple is visible to this transaction before deleting.
+    // This prevents:
+    // - Double-deleting a tuple already deleted by another transaction
+    // - Deleting a tuple created by a future (uncommitted) transaction
+    if !visibility::is_visible(data, txn) {
+        let xmin = visibility::read_xmin(data);
+        let xmax = visibility::read_xmax(data);
+        return Err(Error::TupleNotVisible(txn.id, xmin, xmax));
+    }
+
+    // Check if already deleted by another concurrent transaction
+    let existing_xmax = visibility::read_xmax(data);
+    if existing_xmax != 0 {
+        return Err(Error::AlreadyDeleted(existing_xmax));
     }
 
     // Set XMAX to mark as deleted for this transaction

@@ -166,7 +166,9 @@ async fn alloc_page<B: BufferPool>(bp: &B, file_id: FileId) -> Result<LPageId> {
     let data = header
         .data_mut()
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
-    data.num_pages += 1;
+    data.num_pages = data.num_pages
+        .checked_add(1)
+        .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
     Ok(data.num_pages)
 }
 
@@ -187,6 +189,33 @@ async fn set_root_page<B: BufferPool>(
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
     data.root_page = new_root;
     Ok(())
+}
+
+/// Atomically allocate a new page and set it as root in one header latch.
+///
+/// This prevents the race where two concurrent inserts both exhaust their
+/// ancestor locks, each call `alloc_page` + `set_root_page` separately,
+/// and the second write silently orphans the first new root.
+async fn alloc_and_set_root<B: BufferPool>(
+    bp: &B,
+    file_id: FileId,
+) -> Result<(LPageId, LPageId)> {
+    let header_loc = page_loc(file_id, 0);
+    let mut guard = bp
+        .fetch_page_at_loc_write(header_loc)
+        .await
+        .map_err(Error::BufferError)?;
+    let mut header = IndexFileHeaderPage::new(&mut *guard);
+    let data = header
+        .data_mut()
+        .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
+    let old_root = data.root_page;
+    data.num_pages = data.num_pages
+        .checked_add(1)
+        .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
+    let new_root = data.num_pages;
+    data.root_page = new_root;
+    Ok((new_root, old_root))
 }
 
 /// Read the root page number from the index file header.
@@ -383,6 +412,10 @@ async fn split_inner<B: BufferPool>(
 /// cannot propagate past a safe node, so there is no reason to keep
 /// ancestors locked.
 ///
+/// Uses `is_safe_for_insert()` from the page overlay (which uses
+/// `SAFE_INSERT_THRESHOLD = MAX - 1`) to ensure consistency between the
+/// crabbing logic and the page-level safety predicate.
+///
 /// Returns `(leaf_page, leaf_guard, locked)` where `locked` is ordered
 /// root-to-parent and holds write latches only for nodes that are full
 /// (unsafe) and may need to split. If the leaf is safe, `locked` is empty.
@@ -413,8 +446,9 @@ async fn find_leaf_for_write<'bp, B: BufferPool>(
             PageType::BTreeInner => {
                 let (is_safe, next_child) = {
                     let page = BTreeInnerPage::new(&*guard);
-                    // Safe = has room for one more separator without splitting.
-                    (page.num_keys() < INNER_MAX_KEYS, page.find_child(key))
+                    // Use the page overlay's own safety predicate for consistency
+                    // (SAFE_INSERT_THRESHOLD = MAX_KEYS - 1).
+                    (page.is_safe_for_insert(), page.find_child(key))
                 };
                 if is_safe {
                     // This node won't split, so no split can propagate above it.
@@ -431,7 +465,9 @@ async fn find_leaf_for_write<'bp, B: BufferPool>(
             PageType::BTreeLeaf => {
                 let is_safe = {
                     let page = BTreeLeafPage::new(&*guard);
-                    page.num_entries() < LEAF_MAX_ENTRIES
+                    // Use the page overlay's own safety predicate for consistency
+                    // (SAFE_INSERT_THRESHOLD = MAX_ENTRIES - 1).
+                    page.is_safe_for_insert()
                 };
                 if is_safe {
                     // Safe leaf: no split will occur, so all ancestor latches
@@ -463,13 +499,12 @@ async fn find_leaf_for_write<'bp, B: BufferPool>(
 /// Each guard is used directly — no re-acquisition of latches is needed,
 /// eliminating the race window present in a acquire-on-demand approach.
 ///
-/// If all pre-held ancestors split, a new root is created and the file
-/// header is updated.
+/// If all pre-held ancestors split, a new root is created atomically via
+/// `alloc_and_set_root` to prevent concurrent root creation races.
 async fn insert_into_ancestors_with_locks<'bp, B: BufferPool>(
     bp: &'bp B,
     file_id: FileId,
     mut locked: Vec<(LPageId, B::WriteGuard<'bp>)>,
-    old_root: LPageId,
     mut sep_key: u64,
     mut new_child: LPageId,
 ) -> Result<()> {
@@ -496,8 +531,11 @@ async fn insert_into_ancestors_with_locks<'bp, B: BufferPool>(
         new_child = new_inner;
     }
 
-    // All pre-held ancestors were split (or locked was empty) — create a new root.
-    let new_root_num = alloc_page(bp, file_id).await?;
+    // All pre-held ancestors were split (or locked was empty) — create a new
+    // root. Use alloc_and_set_root to atomically allocate and update the root
+    // pointer under a single file header latch, preventing races where two
+    // concurrent inserts both try to create a new root.
+    let (new_root_num, old_root) = alloc_and_set_root(bp, file_id).await?;
     let new_root_loc = page_loc(file_id, new_root_num);
     let mut root_guard = bp
         .fetch_page_at_loc_write(new_root_loc)
@@ -511,8 +549,6 @@ async fn insert_into_ancestors_with_locks<'bp, B: BufferPool>(
     }
     drop(root_guard);
 
-    set_root_page(bp, file_id, new_root_num).await?;
-
     Ok(())
 }
 
@@ -525,6 +561,7 @@ struct BTreeScanState<B: BufferPool> {
     bp: Arc<B>,
     file_id: FileId,
     current_leaf: LPageId,
+    start_key: Option<u64>,
     end_key: Option<u64>,
     buffered: Vec<(Vec<u8>, RecordId)>,
     buf_idx: usize,
@@ -536,29 +573,33 @@ struct BTreeScanState<B: BufferPool> {
 /// Traverses from root to the leaf containing `start_key`, then follows
 /// sibling pointers (`next_page`) to scan entries in key order until
 /// `end_key` is exceeded or no more leaves exist.
+///
+/// Each item is wrapped in `Result` to propagate I/O and page errors.
 pub(super) async fn scan<B: BufferPool>(
     bp: Arc<B>,
     file_id: FileId,
     _txn: Txn,
     start_key: Option<Vec<u8>>,
     end_key: Option<Vec<u8>>,
-) -> Result<impl Stream<Item = (Vec<u8>, RecordId)> + Send> {
+) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
     let root_page = read_root_page(&*bp, file_id).await?;
 
-    let start = start_key.as_deref().map(key_from_bytes).unwrap_or(0);
+    let start = start_key.as_deref().map(key_from_bytes);
     let end = end_key.as_deref().map(key_from_bytes);
 
     // Find starting leaf (or mark done for empty tree)
     let (leaf_page, done) = if root_page == 0 {
         (0, true)
     } else {
-        (find_leaf(&*bp, file_id, root_page, start).await?, false)
+        let start_val = start.unwrap_or(0);
+        (find_leaf(&*bp, file_id, root_page, start_val).await?, false)
     };
 
     let state = BTreeScanState {
         bp,
         file_id,
         current_leaf: leaf_page,
+        start_key: start,
         end_key: end,
         buffered: Vec::new(),
         buf_idx: 0,
@@ -575,7 +616,7 @@ pub(super) async fn scan<B: BufferPool>(
             if state.buf_idx < state.buffered.len() {
                 let item = state.buffered[state.buf_idx].clone();
                 state.buf_idx += 1;
-                return Some((item, state));
+                return Some((Ok(item), state));
             }
 
             // Need to load a leaf page
@@ -587,7 +628,7 @@ pub(super) async fn scan<B: BufferPool>(
             let loc = page_loc(state.file_id, state.current_leaf);
             let guard = match bp.fetch_page_at_loc_read(loc).await {
                 Ok(g) => g,
-                Err(_) => return None,
+                Err(e) => return Some((Err(Error::BufferError(e)), state)),
             };
 
             let page = BTreeLeafPage::new(&*guard);
@@ -600,8 +641,23 @@ pub(super) async fn scan<B: BufferPool>(
             for i in 0..num_entries {
                 let entry = match page.entry(i) {
                     Ok(e) => e,
-                    Err(_) => continue,
+                    Err(e) => {
+                        return Some((
+                            Err(Error::PageCorruption(format!(
+                                "btree leaf entry read: {:?}",
+                                e
+                            ))),
+                            state,
+                        ));
+                    }
                 };
+
+                // Check start bound — skip entries before start_key
+                if let Some(start) = state.start_key {
+                    if entry.key < start {
+                        continue;
+                    }
+                }
 
                 // Check end bound
                 if let Some(end) = state.end_key {
@@ -615,6 +671,10 @@ pub(super) async fn scan<B: BufferPool>(
                 let rid = RecordId { page_id, slot_id };
                 state.buffered.push((key_to_bytes(entry.key), rid));
             }
+
+            // After processing the first leaf, clear start_key so subsequent
+            // leaves don't re-apply the filter (they are entirely >= start).
+            state.start_key = None;
 
             // Advance to next sibling leaf
             state.current_leaf = next_leaf;
@@ -675,12 +735,12 @@ pub(super) async fn insert<B: BufferPool>(
     let (leaf_num, mut leaf_guard, locked) =
         find_leaf_for_write(bp, file_id, root_page, key_u64).await?;
 
-    let is_full = {
+    let needs_split = {
         let page = BTreeLeafPage::new(&*leaf_guard);
-        page.num_entries() >= LEAF_MAX_ENTRIES
+        page.needs_split()
     };
 
-    if is_full {
+    if needs_split {
         // Leaf is full — split with the new entry merged in, then propagate
         // the separator up through the pre-held ancestor write latches.
         let extra = BTreeLeafEntry::new(key_u64, rid.page_id, rid.slot_id);
@@ -688,7 +748,7 @@ pub(super) async fn insert<B: BufferPool>(
             split_leaf(bp, file_id, &mut *leaf_guard, leaf_num, Some(extra)).await?;
         drop(leaf_guard);
 
-        insert_into_ancestors_with_locks(bp, file_id, locked, root_page, sep, new_leaf).await?;
+        insert_into_ancestors_with_locks(bp, file_id, locked, sep, new_leaf).await?;
     } else {
         // Leaf has room — simple insert. All ancestor write latches in `locked`
         // are released automatically when `locked` is dropped at end of scope.
@@ -754,7 +814,7 @@ struct MergeInfo {
 /// Find merge candidates for a leaf page in its parent.
 ///
 /// Returns `Some(MergeInfo)` if a sibling exists, or `None` if the leaf
-/// is the only child (shouldn't happen in a valid B-Tree with ≥2 children).
+/// is the only child (shouldn't happen in a valid B-Tree with >=2 children).
 fn find_merge_candidate(
     parent_buf: &PageBuffer,
     leaf_num: LPageId,
@@ -799,6 +859,10 @@ fn find_merge_candidate(
 
 /// Attempt to merge an underflowing leaf with a sibling.
 ///
+/// Uses write latches from the start for the capacity check, eliminating the
+/// TOCTOU race where a concurrent insert could grow the survivor between a
+/// read-check and write-latch acquisition.
+///
 /// Merges the `removed` leaf's entries into the `survivor` leaf, updates
 /// sibling pointers, and removes the separator from the parent. If the
 /// parent is the root and becomes empty (0 keys), the tree shrinks by
@@ -815,10 +879,11 @@ async fn try_merge_leaf<B: BufferPool>(
         return Ok(());
     };
 
-    // Read parent to find merge candidates
+    // Write-latch parent to find merge candidates and prevent concurrent
+    // modifications to the parent's child list.
     let parent_loc = page_loc(file_id, parent_num);
-    let parent_guard = bp
-        .fetch_page_at_loc_read(parent_loc)
+    let mut parent_guard = bp
+        .fetch_page_at_loc_write(parent_loc)
         .await
         .map_err(Error::BufferError)?;
 
@@ -826,28 +891,28 @@ async fn try_merge_leaf<B: BufferPool>(
         Some(info) => info,
         None => return Ok(()),
     };
-    drop(parent_guard);
 
-    // Read the removed leaf to check feasibility and collect entries
+    // Write-latch survivor and removed under parent latch to prevent TOCTOU
+    let survivor_loc = page_loc(file_id, merge_info.survivor);
     let removed_loc = page_loc(file_id, merge_info.removed);
-    let removed_guard = bp
-        .fetch_page_at_loc_read(removed_loc)
+
+    let mut survivor_guard = bp
+        .fetch_page_at_loc_write(survivor_loc)
         .await
         .map_err(Error::BufferError)?;
+    let removed_guard = bp
+        .fetch_page_at_loc_write(removed_loc)
+        .await
+        .map_err(Error::BufferError)?;
+
+    let survivor_page = BTreeLeafPage::new(&*survivor_guard);
     let removed_page = BTreeLeafPage::new(&*removed_guard);
+    let survivor_count = survivor_page.num_entries();
     let removed_count = removed_page.num_entries();
 
-    // Read survivor to check combined capacity
-    let survivor_loc = page_loc(file_id, merge_info.survivor);
-    let survivor_guard = bp
-        .fetch_page_at_loc_read(survivor_loc)
-        .await
-        .map_err(Error::BufferError)?;
-    let survivor_page = BTreeLeafPage::new(&*survivor_guard);
-    let survivor_count = survivor_page.num_entries();
-
     if (survivor_count as usize + removed_count as usize) > LEAF_MAX_ENTRIES as usize {
-        // Combined entries don't fit — skip merge
+        // Combined entries don't fit — skip merge (still under write latches,
+        // so the check is accurate).
         return Ok(());
     }
 
@@ -862,13 +927,8 @@ async fn try_merge_leaf<B: BufferPool>(
     }
     let removed_next = removed_page.next_page();
     drop(removed_guard);
-    drop(survivor_guard);
 
-    // Write-latch survivor and insert removed entries
-    let mut survivor_guard = bp
-        .fetch_page_at_loc_write(survivor_loc)
-        .await
-        .map_err(Error::BufferError)?;
+    // Insert removed entries into survivor
     {
         let mut survivor_page = BTreeLeafPage::new(&mut *survivor_guard);
         for entry in &removed_entries {
@@ -893,10 +953,6 @@ async fn try_merge_leaf<B: BufferPool>(
     }
 
     // Remove separator from parent (also removes the removed child pointer)
-    let mut parent_guard = bp
-        .fetch_page_at_loc_write(parent_loc)
-        .await
-        .map_err(Error::BufferError)?;
     {
         let mut parent_page = BTreeInnerPage::new(&mut *parent_guard);
         parent_page
@@ -925,10 +981,11 @@ async fn try_merge_leaf<B: BufferPool>(
 
 /// Delete a key-RecordId pair from the B-Tree index.
 ///
-/// Finds the leaf containing the key and removes the entry. If the leaf
-/// falls below the merge threshold, attempts to merge it with a sibling
-/// and remove the separator from the parent. If the root becomes empty
-/// after a merge, the tree shrinks by one level.
+/// Finds the leaf containing the key and removes the entry. If the key is
+/// not found on the leaf, returns `TupleNonExistent`. If the leaf falls
+/// below the merge threshold, attempts to merge it with a sibling and
+/// remove the separator from the parent. If the root becomes empty after
+/// a merge, the tree shrinks by one level.
 ///
 /// Inner page merges are not cascaded — only leaf merges are performed.
 /// Underfull inner pages remain in the tree but are functionally correct.
@@ -936,7 +993,7 @@ pub(super) async fn delete<B: BufferPool>(
     bp: &B,
     file_id: FileId,
     key: &[u8],
-    _rid: RecordId,
+    rid: RecordId,
 ) -> Result<()> {
     let key_u64 = key_from_bytes(key);
 
@@ -957,7 +1014,23 @@ pub(super) async fn delete<B: BufferPool>(
 
     let can_merge = {
         let mut page = BTreeLeafPage::new(&mut *guard);
-        page.delete_by_key(key_u64)
+
+        // First verify the key exists on this leaf before deleting.
+        let (found, pos) = page.find_slot(key_u64);
+        if !found {
+            return Err(Error::TupleNonExistent);
+        }
+
+        // Verify the entry matches the expected RecordId. For unique indexes
+        // this is always true, but for non-unique indexes this ensures we
+        // delete the correct entry rather than an arbitrary one with the same key.
+        let entry = page.entry(pos)
+            .map_err(|e| Error::PageCorruption(format!("leaf entry read: {:?}", e)))?;
+        if entry.record_page != rid.page_id || entry.record_slot != rid.slot_id {
+            return Err(Error::TupleNonExistent);
+        }
+
+        page.delete_entry(pos)
             .map_err(|e| Error::PageCorruption(format!("leaf delete failed: {:?}", e)))?;
         page.can_merge()
     };

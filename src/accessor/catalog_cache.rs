@@ -34,20 +34,23 @@ impl CatalogCache {
             indexes_by_name: HashMap::new(),
         };
 
-        // Register system tables
-        cache.register_table(schema::SYS_TABLE_TABLES.clone());
+        // Register system tables (expect succeeds: these OIDs are unique by construction)
+        cache.register_table(schema::SYS_TABLE_TABLES.clone())
+            .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_TABLES_OID,
             schema::SYS_COLUMNS_TABLES_TABLE.to_vec(),
         );
 
-        cache.register_table(schema::SYS_TABLE_COLUMNS.clone());
+        cache.register_table(schema::SYS_TABLE_COLUMNS.clone())
+            .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_COLUMNS_OID,
             schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec(),
         );
 
-        cache.register_table(schema::SYS_TABLE_INDEXES.clone());
+        cache.register_table(schema::SYS_TABLE_INDEXES.clone())
+            .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_INDEXES_OID,
             schema::SYS_COLUMNS_INDEXES_TABLE.to_vec(),
@@ -60,20 +63,28 @@ impl CatalogCache {
     // REGISTRATION (used by DDL and init)
     // ========================================================================
 
-    pub fn register_table(&mut self, table: Table) {
+    pub fn register_table(&mut self, table: Table) -> Result<()> {
+        if self.tables.contains_key(&table.oid) {
+            return Err(Error::DuplicateOId(table.oid));
+        }
         self.tables_by_name
             .insert(table.name.to_string(), table.oid);
         self.tables.insert(table.oid, table);
+        Ok(())
     }
 
     pub fn register_columns(&mut self, table_oid: OId, columns: Vec<Column>) {
         self.columns.insert(table_oid, columns);
     }
 
-    pub fn register_index(&mut self, index: Index) {
+    pub fn register_index(&mut self, index: Index) -> Result<()> {
+        if self.indexes.contains_key(&index.oid) {
+            return Err(Error::DuplicateOId(index.oid));
+        }
         self.indexes_by_name
             .insert(index.name.to_string(), index.oid);
         self.indexes.insert(index.oid, index);
+        Ok(())
     }
 
     // ========================================================================
