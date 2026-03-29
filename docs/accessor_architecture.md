@@ -74,7 +74,7 @@ pub struct AccessorImpl<B: BufferPool> {
     bp: Arc<B>,
     catalog: RwLock<CatalogCache>,
 }
-```
+``` 
 
 - Generic over any `BufferPool` implementation
 - `Arc<B>` allows cloning the buffer pool reference into scan streams (which must be `'static`)
@@ -184,7 +184,11 @@ Each index has its own `.idx` file:
 - Page 0: `IndexFileHeaderPage` (metadata: `root_page`, `num_pages`, etc.)
 - Page 1+: `BTreeInnerPage` or `BTreeLeafPage`
 
-### Tree Traversal (`find_leaf`)
+### Tree Traversal
+
+Two traversal functions serve different purposes:
+
+**`find_leaf` — read-only traversal (scan, point lookup)**
 
 ```
 current = root_page (from file header)
@@ -195,14 +199,40 @@ loop:
 
   if BTreeInner:
     child = BTreeInnerPage::find_child(key)
-    release latch
+    release latch          ← latch released before next fetch
     current = child
 
   if BTreeLeaf:
-    return current  (this is the target leaf)
+    return current         ← caller holds read latch on this page
 ```
 
-No latch coupling needed for reads — each page is fetched and released independently.
+No latch coupling needed for reads — each latch is released before the next is acquired.
+
+**`find_leaf_for_write` — write traversal with latch crabbing (insert)**
+
+```
+current = root_page
+locked = []              ← write guards for full (unsafe) ancestors
+
+loop:
+  fetch page (write latch)
+
+  if BTreeInner:
+    safe = num_keys < INNER_MAX_KEYS
+    if safe:
+      locked.clear()     ← release all ancestor latches;
+                            no split can propagate past a safe node
+    locked.push(current) ← hold this latch until child confirmed safe
+    current = find_child(key)
+
+  if BTreeLeaf:
+    safe = num_entries < LEAF_MAX_ENTRIES
+    if safe:
+      locked.clear()     ← release all ancestor latches
+    return (current, leaf_guard, locked)
+```
+
+On return, `locked` contains write latches for exactly the chain of full ancestors that may cascade-split. Safe ancestors are released eagerly. The leaf guard is returned separately.
 
 ### Range Scan
 
@@ -226,17 +256,18 @@ No latch coupling needed for reads — each page is fetched and released indepen
 
 ```
 1. read_root_page() — if root == 0, create root leaf, insert, set root, done
-2. find_leaf_with_path(key) → (leaf_num, path = [root, ..., parent])
-3. Acquire write latch on leaf
-4. If leaf is full (num_entries >= MAX_ENTRIES):
+2. find_leaf_for_write(key) → (leaf_num, leaf_guard, locked)
+     locked = write guards for all full ancestors (root-to-parent order)
+     leaf_guard = write latch on the target leaf
+3. If leaf is full (num_entries >= MAX_ENTRIES):
      split_leaf(extra_entry) → (new_leaf, separator)
-     insert_into_ancestors(path, separator, new_leaf)
-5. Else:
+     insert_into_ancestors_with_locks(locked, separator, new_leaf)
+4. Else:
      BTreeLeafPage::insert_entry(key, page_id, slot_id)
-     If needs_split() after insert:
-       split_leaf(None) → (new_leaf, separator)
-       insert_into_ancestors(path, separator, new_leaf)
+     locked dropped → ancestor latches released
 ```
+
+Latch crabbing eliminates the race window that existed when traversal used read latches and the leaf write latch was acquired separately. All ancestor write latches are acquired during traversal and passed directly into split propagation — no re-acquisition.
 
 #### Leaf Split (`split_leaf`)
 
@@ -262,22 +293,25 @@ No latch coupling needed for reads — each page is fetched and released indepen
 6. Re-init old inner page with lower half
 ```
 
-#### Cascading Split (`insert_into_ancestors`)
+#### Cascading Split (`insert_into_ancestors_with_locks`)
 
 ```
-for each parent in path (bottom-up):
-  Write-latch parent
+for each (parent_num, parent_guard) in locked (bottom-up, pop from end):
   If parent has room:
     insert_separator(sep_key, new_child) → done
+    remaining locked guards dropped → latches released
   Else:
-    split_inner(sep_key, new_child) → (new_inner, pushed_up_key)
+    split_inner(parent_guard, sep_key, new_child) → (new_inner, pushed_up_key)
+    drop parent_guard
     Continue with pushed_up_key → grandparent
 
-If path exhausted (root was split or leaf was root):
+If locked exhausted (entire path was full, or locked was empty):
   Allocate new root inner page
   leftmost_child = old_root, insert separator → new_child
   Update file header root_page = new_root
 ```
+
+Uses pre-held write guards from latch crabbing — no latches are re-acquired during propagation.
 
 ### Delete (with leaf merge)
 
@@ -355,7 +389,7 @@ pub enum Error {
 
 ## Future Work
 
-- **Latch crabbing for writes**: Currently, split propagation releases the leaf latch before acquiring parent latches (brief inconsistency window). Use `is_safe_for_insert()` during traversal to release parent latches early, eliminating the window. Consider B-link tree (high keys + right-link pointers) for lock-free readers during splits.
+- **B-link tree optimisation**: Latch crabbing is implemented. For even higher concurrency, add high keys and right-link pointers (B-link tree) so readers never need to restart on a split — they simply follow the right link if they land on a page whose high key is below the search key.
 - **Inner page merge on delete**: Leaf merges are implemented but inner page underflow is not cascaded. Implement inner page merge with separator pull-down and recursive parent shrinking.
 - **WAL integration**: Every write through a `PageWriteGuard` should call `commit_wal(lsn)` after modification.
 - **Free space map**: Replace linear page scan in `heap::insert` with a free space bucket lookup via the page directory.

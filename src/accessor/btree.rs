@@ -373,56 +373,130 @@ async fn split_inner<B: BufferPool>(
 }
 
 // ============================================================================
-// INSERT INTO ANCESTORS (cascading split propagation)
+// LATCH-CRABBING WRITE TRAVERSAL
 // ============================================================================
 
-/// Insert a separator into the parent inner page, cascading splits upward.
+/// Traverse the B-Tree with write latches using latch crabbing.
 ///
-/// Walks up the `path` stack (from leaf's parent toward root), inserting the
-/// separator at each level. If an inner page is full, it is split and the
-/// pushed-up key propagates to the next ancestor.
+/// Acquires write latches top-down. When a node is safe for insert (won't
+/// split), all ancestor write latches held above it are released — splits
+/// cannot propagate past a safe node, so there is no reason to keep
+/// ancestors locked.
 ///
-/// If the root itself splits, a new root is created and the file header
-/// is updated.
-async fn insert_into_ancestors<B: BufferPool>(
-    bp: &B,
+/// Returns `(leaf_page, leaf_guard, locked)` where `locked` is ordered
+/// root-to-parent and holds write latches only for nodes that are full
+/// (unsafe) and may need to split. If the leaf is safe, `locked` is empty.
+async fn find_leaf_for_write<'bp, B: BufferPool>(
+    bp: &'bp B,
     file_id: FileId,
-    mut path: Vec<LPageId>,
-    old_root: LPageId,
-    mut sep_key: u64,
-    mut new_child: LPageId,
-) -> Result<()> {
-    while let Some(parent_num) = path.pop() {
-        let loc = page_loc(file_id, parent_num);
-        let mut guard = bp
+    root_page: LPageId,
+    key: u64,
+) -> Result<(LPageId, B::WriteGuard<'bp>, Vec<(LPageId, B::WriteGuard<'bp>)>)> {
+    let mut current = root_page;
+    // Holds write guards for ancestors that are full and may cascade-split.
+    let mut locked: Vec<(LPageId, B::WriteGuard<'bp>)> = Vec::new();
+
+    loop {
+        let loc = page_loc(file_id, current);
+        let guard = bp
             .fetch_page_at_loc_write(loc)
             .await
             .map_err(Error::BufferError)?;
 
+        let uber = UberPageHeader::read_from_prefix(&*guard)
+            .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
+            .0;
+        let page_type = PageType::try_from(uber.page_type_id)
+            .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+
+        match page_type {
+            PageType::BTreeInner => {
+                let (is_safe, next_child) = {
+                    let page = BTreeInnerPage::new(&*guard);
+                    // Safe = has room for one more separator without splitting.
+                    (page.num_keys() < INNER_MAX_KEYS, page.find_child(key))
+                };
+                if is_safe {
+                    // This node won't split, so no split can propagate above it.
+                    // Release all ancestor write latches — they are no longer needed.
+                    locked.clear();
+                }
+                // Keep this node's write latch: it is either unsafe (full) and
+                // may split, or it is safe but we must hold it until its child
+                // is also confirmed safe (at which point locked.clear() will
+                // release it on the next iteration).
+                locked.push((current, guard));
+                current = next_child;
+            }
+            PageType::BTreeLeaf => {
+                let is_safe = {
+                    let page = BTreeLeafPage::new(&*guard);
+                    page.num_entries() < LEAF_MAX_ENTRIES
+                };
+                if is_safe {
+                    // Safe leaf: no split will occur, so all ancestor latches
+                    // can be released now.
+                    locked.clear();
+                }
+                // Return leaf guard separately; locked contains only ancestor guards.
+                return Ok((current, guard, locked));
+            }
+            _ => {
+                return Err(Error::PageCorruption(format!(
+                    "unexpected page type {:?} during latch-crabbing traversal",
+                    page_type
+                )));
+            }
+        }
+    }
+}
+
+// ============================================================================
+// INSERT INTO ANCESTORS (cascading split propagation with pre-held locks)
+// ============================================================================
+
+/// Insert a separator into already write-latched ancestors, cascading splits
+/// upward.
+///
+/// Consumes the pre-held write guards in `locked` (ordered root-to-parent),
+/// popping from the end (parent-first) to handle split propagation bottom-up.
+/// Each guard is used directly — no re-acquisition of latches is needed,
+/// eliminating the race window present in a acquire-on-demand approach.
+///
+/// If all pre-held ancestors split, a new root is created and the file
+/// header is updated.
+async fn insert_into_ancestors_with_locks<'bp, B: BufferPool>(
+    bp: &'bp B,
+    file_id: FileId,
+    mut locked: Vec<(LPageId, B::WriteGuard<'bp>)>,
+    old_root: LPageId,
+    mut sep_key: u64,
+    mut new_child: LPageId,
+) -> Result<()> {
+    while let Some((parent_num, mut guard)) = locked.pop() {
         let is_full = {
             let page = BTreeInnerPage::new(&*guard);
             page.num_keys() >= INNER_MAX_KEYS
         };
 
         if !is_full {
-            // Parent has room — insert separator and we're done
+            // Parent has room — insert separator and we're done.
             let mut page = BTreeInnerPage::new(&mut *guard);
             page.insert_separator(sep_key, new_child)
                 .map_err(|e| Error::PageCorruption(format!("parent insert: {:?}", e)))?;
             return Ok(());
         }
 
-        // Parent is full — split with the new separator merged in
+        // Parent is full — split using the pre-held write guard.
         let (new_inner, pushed_up) =
             split_inner(bp, file_id, &mut *guard, parent_num, sep_key, new_child).await?;
         drop(guard);
 
-        // Propagate the pushed-up key to the next ancestor
         sep_key = pushed_up;
         new_child = new_inner;
     }
 
-    // Path exhausted — the root was split (or leaf was root), create a new root
+    // All pre-held ancestors were split (or locked was empty) — create a new root.
     let new_root_num = alloc_page(bp, file_id).await?;
     let new_root_loc = page_loc(file_id, new_root_num);
     let mut root_guard = bp
@@ -595,15 +669,11 @@ pub(super) async fn insert<B: BufferPool>(
         return Ok(());
     }
 
-    // Find the target leaf with path tracking for potential splits
-    let (leaf_num, path) = find_leaf_with_path(bp, file_id, root_page, key_u64).await?;
-
-    // Acquire write latch on the leaf
-    let loc = page_loc(file_id, leaf_num);
-    let mut leaf_guard = bp
-        .fetch_page_at_loc_write(loc)
-        .await
-        .map_err(Error::BufferError)?;
+    // Latch-crabbing traversal: acquire write latches top-down, releasing safe
+    // ancestors early. Returns the leaf's write latch plus write latches for
+    // all full (unsafe) ancestors that may need to split.
+    let (leaf_num, mut leaf_guard, locked) =
+        find_leaf_for_write(bp, file_id, root_page, key_u64).await?;
 
     let is_full = {
         let page = BTreeLeafPage::new(&*leaf_guard);
@@ -611,32 +681,20 @@ pub(super) async fn insert<B: BufferPool>(
     };
 
     if is_full {
-        // Leaf is full — split with the new entry merged in
+        // Leaf is full — split with the new entry merged in, then propagate
+        // the separator up through the pre-held ancestor write latches.
         let extra = BTreeLeafEntry::new(key_u64, rid.page_id, rid.slot_id);
         let (new_leaf, sep) =
             split_leaf(bp, file_id, &mut *leaf_guard, leaf_num, Some(extra)).await?;
         drop(leaf_guard);
 
-        // Propagate separator into ancestors
-        insert_into_ancestors(bp, file_id, path, root_page, sep, new_leaf).await?;
+        insert_into_ancestors_with_locks(bp, file_id, locked, root_page, sep, new_leaf).await?;
     } else {
-        // Leaf has room — simple insert
+        // Leaf has room — simple insert. All ancestor write latches in `locked`
+        // are released automatically when `locked` is dropped at end of scope.
         let mut page = BTreeLeafPage::new(&mut *leaf_guard);
         page.insert_entry(key_u64, rid.page_id, rid.slot_id)
             .map_err(|e| Error::PageCorruption(format!("leaf insert: {:?}", e)))?;
-
-        // Check if the insert filled the leaf (252 → 253 = MAX_ENTRIES)
-        let needs_split = {
-            let page = BTreeLeafPage::new(&*leaf_guard);
-            page.num_entries() >= LEAF_MAX_ENTRIES
-        };
-
-        if needs_split {
-            let (new_leaf, sep) =
-                split_leaf(bp, file_id, &mut *leaf_guard, leaf_num, None).await?;
-            drop(leaf_guard);
-            insert_into_ancestors(bp, file_id, path, root_page, sep, new_leaf).await?;
-        }
     }
 
     Ok(())
