@@ -9,6 +9,7 @@ pub struct UnknownPage<T> {
     data: T,
 }
 
+#[derive(Debug)]
 pub enum Error {
     ConvertError(overlays::common::ConvertError),
 }
