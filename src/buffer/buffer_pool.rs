@@ -1,5 +1,5 @@
 use crate::{
-    buffer::{PageReadGuard, PageWriteGuard},
+    buffer::{PageReadGuard, PageWriteGuard, evictor},
     common::aliases,
     storage, wal,
 };
@@ -9,6 +9,8 @@ pub enum Error {
     OOM,
     WALError(wal::Error),
     StorageError(storage::DiskError),
+    EvictorError(evictor::Error),
+    SomeoneFuckedUp(String),
 }
 
 pub type Result<V> = std::result::Result<V, Error>;
@@ -25,11 +27,11 @@ pub trait BufferPool: Send + Sync + 'static {
         Self: 'a;
 
     fn load_page_as_unevictable(
-        &self,
+        &'static self,
         page_id: aliases::LPageId,
     ) -> impl Future<Output = ()> + Send;
     fn load_page_loc_as_unevictable(
-        &self,
+        &'static self,
         loc: aliases::PPageId,
     ) -> impl Future<Output = ()> + Send;
 
@@ -39,28 +41,27 @@ pub trait BufferPool: Send + Sync + 'static {
     /// 3. Pins the frame.
     /// 4. Acquires an Exclusive Latch (lock) on the page.
     fn fetch_page_write(
-        &self,
+        &'static self,
         page_id: aliases::LPageId,
     ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
 
     /// Fetches a page for READING.
     /// (Similar to above, but acquires a Shared Latch)
     fn fetch_page_read(
-        &self,
+        &'static self,
         page_id: aliases::LPageId,
     ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
 
     fn fetch_page_at_loc_write(
-        &self,
+        &'static self,
         loc: aliases::PPageId,
     ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
 
     fn fetch_page_at_loc_read(
-        &self,
+        &'static self,
         loc: aliases::PPageId,
     ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
 
-    fn new_page(&self) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
-
-    fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send;
+    fn new_page(&'static self) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
+    fn flush_all_dirty(&'static self) -> impl Future<Output = Result<()>> + Send;
 }
