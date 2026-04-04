@@ -519,7 +519,6 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
 
                 // 4. Read from disk using the physical location.
-                // Assuming this returns the LPageId associated with this physical location.
                 self.disk_manager
                     .read_page_at_loc(loc, frame_slice)
                     .await
