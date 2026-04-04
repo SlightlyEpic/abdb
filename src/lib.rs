@@ -9,5 +9,6 @@ pub mod optimizer;
 pub mod page;
 pub mod parser;
 pub mod planner;
+pub mod server;
 pub mod storage;
 pub mod wal;

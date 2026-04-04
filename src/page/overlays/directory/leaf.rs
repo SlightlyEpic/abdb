@@ -29,7 +29,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{
-        aliases::{LPageId, SlotId},
+        aliases::{FileId, LPageId, PPageId},
         constants::PAGE_BUF_SIZE,
     },
     page::{PageType, UberPageHeader, header::UBER_HEADER_SIZE},
@@ -96,41 +96,60 @@ const _: () = assert!(size_of::<DirectoryLeafHeader>() == 24);
 
 /// A single entry in a directory leaf page.
 ///
-/// Maps a logical PageId (search_key) to a physical location (page + slot).
+/// Maps a logical PageId (search_key) to a physical location (file_id + page_number).
+/// The physical byte offset is computed as `page_number * PAGE_SIZE`.
 ///
 /// # Layout (16 bytes, C repr)
 ///
 /// ```text
-/// Bytes 0-7:   search_key   (u64)
-/// Bytes 8-11:  record_page  (u32)
-/// Bytes 12-13: record_slot  (u16)
-/// Bytes 14-15: _padding     (u16)
+/// Bytes 0-7:   search_key   (u64) - LPageId stored as u64 for B-tree search
+/// Bytes 8-11:  file_id      (u32) - FileId of the file containing the page
+/// Bytes 12-15: page_number  (u32) - Page number within the file (offset = page_number * PAGE_SIZE)
 /// ```
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, FromBytes, IntoBytes, KnownLayout, Immutable)]
 pub struct DirectoryLeafEntry {
     pub search_key: u64,
-    pub record_page: LPageId,
-    pub record_slot: SlotId,
-    _padding: u16,
+    pub file_id: FileId,
+    pub page_number: u32,
 }
 
 const _: () = assert!(size_of::<DirectoryLeafEntry>() == 16);
 
 impl DirectoryLeafEntry {
     #[inline]
-    pub fn new(logical_page_id: u64, physical_page: LPageId, slot: SlotId) -> Self {
+    pub fn new(logical_page_id: LPageId, file_id: FileId, page_number: u32) -> Self {
         Self {
-            search_key: logical_page_id,
-            record_page: physical_page,
-            record_slot: slot,
-            _padding: 0,
+            search_key: logical_page_id as u64,
+            file_id,
+            page_number,
         }
     }
 
+    /// Construct from a logical page ID and physical page ID.
     #[inline]
-    pub fn physical_location(&self) -> (LPageId, SlotId) {
-        (self.record_page, self.record_slot)
+    pub fn from_ppage_id(logical_page_id: LPageId, ppage_id: PPageId) -> Self {
+        let page_number = (ppage_id.offset / PAGE_BUF_SIZE as u64) as u32;
+        Self {
+            search_key: logical_page_id as u64,
+            file_id: ppage_id.file,
+            page_number,
+        }
+    }
+
+    /// Convert to a physical page ID.
+    #[inline]
+    pub fn to_ppage_id(&self) -> PPageId {
+        PPageId {
+            file: self.file_id,
+            offset: self.page_number as u64 * PAGE_BUF_SIZE as u64,
+        }
+    }
+
+    /// Get the logical page ID (search key as LPageId).
+    #[inline]
+    pub fn logical_page_id(&self) -> LPageId {
+        self.search_key as LPageId
     }
 }
 
@@ -306,11 +325,11 @@ where
         (false, left)
     }
 
-    /// Look up a key. Returns `Some((page, slot))` if found.
-    pub fn lookup(&self, key: u64) -> Option<(LPageId, SlotId)> {
+    /// Look up a key. Returns `Some(PPageId)` if found.
+    pub fn lookup(&self, key: u64) -> Option<PPageId> {
         let (found, pos) = self.find_slot(key);
         if found {
-            Some(self.entry(pos).unwrap().physical_location())
+            Some(self.entry(pos).unwrap().to_ppage_id())
         } else {
             None
         }
@@ -464,9 +483,8 @@ where
     /// Uses binary search + `copy_within` for shifting + zerocopy for writing.
     pub fn insert_entry(
         &mut self,
-        logical_page_id: u64,
-        physical_page: LPageId,
-        physical_slot: SlotId,
+        logical_page_id: LPageId,
+        ppage_id: PPageId,
     ) -> Result<(), OverlayError> {
         let num_entries = self.num_entries();
 
@@ -477,11 +495,10 @@ where
             });
         }
 
-        let (found, insert_pos) = self.find_slot(logical_page_id);
+        let search_key = logical_page_id as u64;
+        let (found, insert_pos) = self.find_slot(search_key);
         if found {
-            return Err(OverlayError::DuplicateKey {
-                key: logical_page_id,
-            });
+            return Err(OverlayError::DuplicateKey { key: search_key });
         }
 
         // Shift entries right (copy_within handles overlapping regions)
@@ -496,7 +513,7 @@ where
 
         self.set_entry(
             insert_pos,
-            DirectoryLeafEntry::new(logical_page_id, physical_page, physical_slot),
+            DirectoryLeafEntry::from_ppage_id(logical_page_id, ppage_id),
         );
         self.set_num_entries(num_entries + 1);
 
@@ -541,13 +558,16 @@ where
     /// Returns `Ok(true)` if found and updated.
     pub fn update_entry(
         &mut self,
-        key: u64,
-        new_page: LPageId,
-        new_slot: SlotId,
+        logical_page_id: LPageId,
+        new_ppage_id: PPageId,
     ) -> Result<bool, OverlayError> {
-        let (found, pos) = self.find_slot(key);
+        let search_key = logical_page_id as u64;
+        let (found, pos) = self.find_slot(search_key);
         if found {
-            self.set_entry(pos, DirectoryLeafEntry::new(key, new_page, new_slot));
+            self.set_entry(
+                pos,
+                DirectoryLeafEntry::from_ppage_id(logical_page_id, new_ppage_id),
+            );
             Ok(true)
         } else {
             Ok(false)
@@ -603,9 +623,11 @@ mod tests {
     fn test_entry_structure() {
         let entry = DirectoryLeafEntry::new(100, 5, 3);
         assert_eq!(entry.search_key, 100);
-        assert_eq!(entry.record_page, 5);
-        assert_eq!(entry.record_slot, 3);
-        assert_eq!(entry.physical_location(), (5, 3));
+        assert_eq!(entry.file_id, 5);
+        assert_eq!(entry.page_number, 3);
+        let ppage = entry.to_ppage_id();
+        assert_eq!(ppage.file, 5);
+        assert_eq!(ppage.offset, 3 * PAGE_BUF_SIZE as u64);
     }
 
     #[test]
@@ -629,11 +651,16 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
-        page.insert_entry(300, 1, 0).unwrap();
-        page.insert_entry(100, 2, 0).unwrap();
-        page.insert_entry(200, 3, 0).unwrap();
-        page.insert_entry(500, 4, 0).unwrap();
-        page.insert_entry(400, 5, 0).unwrap();
+        let ppage = |file, page_num| PPageId {
+            file,
+            offset: page_num * PAGE_BUF_SIZE as u64,
+        };
+
+        page.insert_entry(300, ppage(1, 0)).unwrap();
+        page.insert_entry(100, ppage(2, 0)).unwrap();
+        page.insert_entry(200, ppage(3, 0)).unwrap();
+        page.insert_entry(500, ppage(4, 0)).unwrap();
+        page.insert_entry(400, ppage(5, 0)).unwrap();
 
         assert_eq!(page.entry(0).unwrap().search_key, 100);
         assert_eq!(page.entry(1).unwrap().search_key, 200);
@@ -660,11 +687,16 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
-        page.insert_entry(100, 5, 3).unwrap();
-        page.insert_entry(200, 10, 7).unwrap();
+        let ppage = |file, page_num| PPageId {
+            file,
+            offset: page_num * PAGE_BUF_SIZE as u64,
+        };
 
-        assert_eq!(page.lookup(100), Some((5, 3)));
-        assert_eq!(page.lookup(200), Some((10, 7)));
+        page.insert_entry(100, ppage(5, 3)).unwrap();
+        page.insert_entry(200, ppage(10, 7)).unwrap();
+
+        assert_eq!(page.lookup(100), Some(ppage(5, 3)));
+        assert_eq!(page.lookup(200), Some(ppage(10, 7)));
         assert_eq!(page.lookup(150), None);
     }
 
@@ -672,9 +704,15 @@ mod tests {
     fn test_duplicate_key() {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
-        page.insert_entry(100, 1, 0).unwrap();
 
-        let result = page.insert_entry(100, 2, 0);
+        let ppage = |file, page_num| PPageId {
+            file,
+            offset: page_num * PAGE_BUF_SIZE as u64,
+        };
+
+        page.insert_entry(100, ppage(1, 0)).unwrap();
+
+        let result = page.insert_entry(100, ppage(2, 0));
         assert!(matches!(
             result,
             Err(OverlayError::DuplicateKey { key: 100 })
@@ -686,14 +724,16 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
+        let ppage = PPageId { file: 0, offset: 0 };
+
         for i in 0..MAX_ENTRIES {
-            page.insert_entry(i as u64, 0, 0).unwrap();
+            page.insert_entry(i as u32, ppage).unwrap();
         }
 
         assert!(page.needs_split());
         assert!(!page.is_safe_for_insert());
 
-        let result = page.insert_entry(999, 0, 0);
+        let result = page.insert_entry(999, ppage);
         assert!(matches!(result, Err(OverlayError::PageFull { .. })));
     }
 
@@ -702,9 +742,11 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
-        page.insert_entry(100, 1, 0).unwrap();
-        page.insert_entry(200, 2, 0).unwrap();
-        page.insert_entry(300, 3, 0).unwrap();
+        let ppage = |file| PPageId { file, offset: 0 };
+
+        page.insert_entry(100, ppage(1)).unwrap();
+        page.insert_entry(200, ppage(2)).unwrap();
+        page.insert_entry(300, ppage(3)).unwrap();
 
         page.delete_entry(1).unwrap();
 
@@ -718,8 +760,10 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
-        page.insert_entry(100, 1, 0).unwrap();
-        page.insert_entry(200, 2, 0).unwrap();
+        let ppage = |file| PPageId { file, offset: 0 };
+
+        page.insert_entry(100, ppage(1)).unwrap();
+        page.insert_entry(200, ppage(2)).unwrap();
 
         assert!(page.delete_by_key(100).unwrap());
         assert!(!page.delete_by_key(100).unwrap());
@@ -732,10 +776,15 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
-        page.insert_entry(100, 1, 0).unwrap();
-        assert!(page.update_entry(100, 99, 88).unwrap());
-        assert_eq!(page.lookup(100), Some((99, 88)));
-        assert!(!page.update_entry(999, 1, 1).unwrap());
+        let ppage = |file, page_num| PPageId {
+            file,
+            offset: page_num * PAGE_BUF_SIZE as u64,
+        };
+
+        page.insert_entry(100, ppage(1, 0)).unwrap();
+        assert!(page.update_entry(100, ppage(99, 88)).unwrap());
+        assert_eq!(page.lookup(100), Some(ppage(99, 88)));
+        assert!(!page.update_entry(999, ppage(1, 1)).unwrap());
     }
 
     #[test]
@@ -758,12 +807,14 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = DirectoryLeafPage::init(buffer, 1);
 
+        let ppage = PPageId { file: 0, offset: 0 };
+
         for i in 0..(SAFE_INSERT_THRESHOLD - 1) {
-            page.insert_entry(i as u64, 0, 0).unwrap();
+            page.insert_entry(i as u32, ppage).unwrap();
         }
         assert!(page.is_safe_for_insert());
 
-        page.insert_entry(SAFE_INSERT_THRESHOLD as u64, 0, 0)
+        page.insert_entry(SAFE_INSERT_THRESHOLD as u32, ppage)
             .unwrap();
         assert!(!page.is_safe_for_insert());
     }

@@ -1,5 +1,6 @@
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::buffer::PageWriteGuard as PageWriteGuardTrait;
@@ -10,7 +11,7 @@ use crate::page::overlays;
 use crate::storage::DiskManager;
 use crate::{buffer, storage};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum FrameMeta {
     Vacant,
     Loaded {
@@ -21,7 +22,7 @@ enum FrameMeta {
 }
 
 pub struct BufferPool<D: DiskManager> {
-    disk_manager: D,
+    disk_manager: Arc<D>,
     pub eviction_policy: Box<dyn EvictionPolicy>,
     num_frames: usize,
     buf: UnsafeCell<storage::AlignedBuffer>,
@@ -42,7 +43,7 @@ unsafe impl<D: DiskManager + Sync> Sync for BufferPool<D> {}
 impl<D: DiskManager> BufferPool<D> {
     pub fn new(
         num_frames: usize,
-        disk_manager: D,
+        disk_manager: Arc<D>,
         eviction_policy: Box<dyn EvictionPolicy>,
     ) -> Self {
         Self {
@@ -131,11 +132,17 @@ impl<D: DiskManager> BufferPool<D> {
     /* #endregion */
 
     pub fn incr_pin(&self, frame_idx: usize) {
-        self.pin_counts[frame_idx].fetch_add(1, Ordering::SeqCst);
+        let old_pin = self.pin_counts[frame_idx].fetch_add(1, Ordering::SeqCst);
+        if old_pin == 0 {
+            self.eviction_policy.set_evictable(frame_idx, false);
+        }
     }
 
     pub fn decr_pin(&self, frame_idx: usize) {
-        self.pin_counts[frame_idx].fetch_sub(1, Ordering::SeqCst);
+        let old_pin = self.pin_counts[frame_idx].fetch_sub(1, Ordering::SeqCst);
+        if old_pin == 1 {
+            self.eviction_policy.set_evictable(frame_idx, true);
+        }
     }
 
     async fn evict(&self) -> buffer::Result<()> {
@@ -197,6 +204,8 @@ impl<D: DiskManager> BufferPool<D> {
                 meta_write[victim_idx] = FrameMeta::Vacant;
 
                 self.vacant_frames_write().insert(victim_idx);
+
+                self.eviction_policy.remove_frame(victim_idx);
             }
 
             // Successfully evicted and cleaned up!
@@ -235,9 +244,9 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         Self: 'a;
 
     fn load_page_as_unevictable(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = ()> + Send {
+    ) -> impl Future<Output = ()> + Send + '_ {
         async move {
             let read_guard = self.fetch_page_read(page_id).await.unwrap();
             // pin count will never go below 1, frame will never be evicted
@@ -248,14 +257,14 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
     fn load_page_loc_as_unevictable(
         &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = ()> + Send {
+    ) -> impl Future<Output = ()> + Send + '_ {
         async { todo!() }
     }
 
     fn fetch_page_write(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send {
+    ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send + '_ {
         async move {
             let (frame_idx, is_loaded, _opt_write_latch) = loop {
                 {
@@ -352,9 +361,9 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
     }
 
     fn fetch_page_read(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'static>>> + Send {
+    ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'_>>> + Send + '_ {
         async move {
             let (frame_idx, is_loaded, _opt_write_latch) = loop {
                 {
@@ -446,9 +455,9 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
     }
 
     fn fetch_page_at_loc_write(
-        &'static self,
+        &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send {
+    ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send + '_ {
         async move {
             let (frame_idx, is_loaded, _opt_write_latch) = loop {
                 {
@@ -519,7 +528,6 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                 let frame_slice = unsafe { &mut *self.frame_buf_mut(frame_idx) };
 
                 // 4. Read from disk using the physical location.
-                // Assuming this returns the LPageId associated with this physical location.
                 self.disk_manager
                     .read_page_at_loc(loc, frame_slice)
                     .await
@@ -554,15 +562,15 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
     fn fetch_page_at_loc_read(
         &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'_>>> + Send {
+    ) -> impl Future<Output = buffer::Result<Self::ReadGuard<'_>>> + Send + '_ {
         async { todo!() }
     }
 
-    fn new_page(&self) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send {
+    fn new_page(&self) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send + '_ {
         async { todo!() }
     }
 
-    fn flush_all_dirty(&self) -> impl Future<Output = buffer::Result<()>> + Send {
+    fn flush_all_dirty(&self) -> impl Future<Output = buffer::Result<()>> + Send + '_ {
         async { todo!() }
     }
 }

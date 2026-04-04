@@ -31,7 +31,7 @@ impl<'a, D: DiskManager> PageReadGuard<'a, D> {
     pub fn new(
         frame_idx: usize,
         page: &'a aliases::PageBuffer,
-        buffer_pool: &'static BufferPool<D>,
+        buffer_pool: &'a BufferPool<D>,
         latch_guard: tokio::sync::RwLockReadGuard<'a, ()>,
     ) -> Self {
         buffer_pool.eviction_policy.record_access(frame_idx);
@@ -66,7 +66,7 @@ impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
     pub fn new(
         frame_idx: usize,
         page: &'a mut aliases::PageBuffer,
-        buffer_pool: &'static BufferPool<D>,
+        buffer_pool: &'a BufferPool<D>,
         latch_guard: tokio::sync::RwLockWriteGuard<'a, ()>,
     ) -> Self {
         Self {

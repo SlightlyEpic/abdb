@@ -62,7 +62,7 @@ fn page_loc(file_id: FileId, page_num: LPageId) -> PPageId {
 /// Uses read latches only. Releases each page latch before fetching the next
 /// (no latch coupling needed for pure reads).
 async fn find_leaf<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     root_page: LPageId,
     key: u64,
@@ -107,7 +107,7 @@ async fn find_leaf<B: BufferPool>(
 /// Returns `(leaf_page_num, path)` where `path` is the stack of inner page
 /// numbers from root to the parent of the leaf: `[root, ..., parent]`.
 async fn find_leaf_with_path<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     root_page: LPageId,
     key: u64,
@@ -156,7 +156,7 @@ async fn find_leaf_with_path<B: BufferPool>(
 ///
 /// Acquires a write latch on the file header, increments `num_pages`,
 /// and returns the new page number.
-async fn alloc_page<B: BufferPool>(bp: &'static B, file_id: FileId) -> Result<LPageId> {
+async fn alloc_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<LPageId> {
     let header_loc = page_loc(file_id, 0);
     let mut guard = bp
         .fetch_page_at_loc_write(header_loc)
@@ -174,11 +174,7 @@ async fn alloc_page<B: BufferPool>(bp: &'static B, file_id: FileId) -> Result<LP
 }
 
 /// Update the root_page pointer in the index file header.
-async fn set_root_page<B: BufferPool>(
-    bp: &'static B,
-    file_id: FileId,
-    new_root: LPageId,
-) -> Result<()> {
+async fn set_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId, new_root: LPageId) -> Result<()> {
     let header_loc = page_loc(file_id, 0);
     let mut guard = bp
         .fetch_page_at_loc_write(header_loc)
@@ -198,7 +194,7 @@ async fn set_root_page<B: BufferPool>(
 /// ancestor locks, each call `alloc_page` + `set_root_page` separately,
 /// and the second write silently orphans the first new root.
 async fn alloc_and_set_root<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
 ) -> Result<(LPageId, LPageId)> {
     let header_loc = page_loc(file_id, 0);
@@ -221,7 +217,7 @@ async fn alloc_and_set_root<B: BufferPool>(
 }
 
 /// Read the root page number from the index file header.
-async fn read_root_page<B: BufferPool>(bp: &'static B, file_id: FileId) -> Result<LPageId> {
+async fn read_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<LPageId> {
     let header_loc = page_loc(file_id, 0);
     let guard = bp
         .fetch_page_at_loc_read(header_loc)
@@ -247,7 +243,7 @@ async fn read_root_page<B: BufferPool>(bp: &'static B, file_id: FileId) -> Resul
 ///
 /// Returns `(new_leaf_page_num, separator_key)`.
 async fn split_leaf<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     leaf_buf: &mut PageBuffer,
     leaf_page_num: LPageId,
@@ -339,7 +335,7 @@ async fn split_leaf<B: BufferPool>(
 ///
 /// Returns `(new_inner_page_num, pushed_up_separator_key)`.
 async fn split_inner<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     inner_buf: &mut PageBuffer,
     inner_page_num: LPageId,
@@ -422,18 +418,18 @@ async fn split_inner<B: BufferPool>(
 /// root-to-parent and holds write latches only for nodes that are full
 /// (unsafe) and may need to split. If the leaf is safe, `locked` is empty.
 async fn find_leaf_for_write<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     root_page: LPageId,
     key: u64,
 ) -> Result<(
     LPageId,
-    B::WriteGuard<'static>,
-    Vec<(LPageId, B::WriteGuard<'static>)>,
+    B::WriteGuard<'_>,
+    Vec<(LPageId, B::WriteGuard<'_>)>,
 )> {
     let mut current = root_page;
     // Holds write guards for ancestors that are full and may cascade-split.
-    let mut locked: Vec<(LPageId, B::WriteGuard<'static>)> = Vec::new();
+    let mut locked: Vec<(LPageId, B::WriteGuard<'_>)> = Vec::new();
 
     loop {
         let loc = page_loc(file_id, current);
@@ -509,9 +505,9 @@ async fn find_leaf_for_write<B: BufferPool>(
 /// If all pre-held ancestors split, a new root is created atomically via
 /// `alloc_and_set_root` to prevent concurrent root creation races.
 async fn insert_into_ancestors_with_locks<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
-    mut locked: Vec<(LPageId, B::WriteGuard<'static>)>,
+    mut locked: Vec<(LPageId, B::WriteGuard<'_>)>,
     mut sep_key: u64,
     mut new_child: LPageId,
 ) -> Result<()> {
@@ -564,8 +560,8 @@ async fn insert_into_ancestors_with_locks<B: BufferPool>(
 // ============================================================================
 
 /// State machine for the B-Tree range scan stream.
-struct BTreeScanState<B: BufferPool> {
-    bp: &'static B,
+struct BTreeScanState<'a, B: BufferPool> {
+    bp: &'a B,
     file_id: FileId,
     current_leaf: LPageId,
     start_key: Option<u64>,
@@ -583,7 +579,7 @@ struct BTreeScanState<B: BufferPool> {
 ///
 /// Each item is wrapped in `Result` to propagate I/O and page errors.
 pub(super) async fn scan<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     _txn: Txn,
     start_key: Option<Vec<u8>>,
@@ -708,7 +704,7 @@ pub(super) async fn scan<B: BufferPool>(
 /// 3. Leaf is full: splits the leaf and propagates the separator up the tree,
 ///    creating a new root if necessary.
 pub(super) async fn insert<B: BufferPool>(
-    bp: &'static B,
+    bp: &B,
     file_id: FileId,
     key: &[u8],
     rid: RecordId,
@@ -774,11 +770,7 @@ pub(super) async fn insert<B: BufferPool>(
 /// Look up a single key in the B-Tree index.
 ///
 /// Only valid for unique indexes. Returns the RecordId of the matching tuple.
-pub(super) async fn get<B: BufferPool>(
-    bp: &'static B,
-    file_id: FileId,
-    key: &[u8],
-) -> Result<RecordId> {
+pub(super) async fn get<B: BufferPool>(bp: &'_ B, file_id: FileId, key: &[u8]) -> Result<RecordId> {
     let key_u64 = key_from_bytes(key);
 
     let root_page = read_root_page(bp, file_id).await?;
@@ -872,7 +864,7 @@ fn find_merge_candidate(parent_buf: &PageBuffer, leaf_num: LPageId) -> Option<Me
 /// parent is the root and becomes empty (0 keys), the tree shrinks by
 /// promoting the root's sole remaining child as the new root.
 async fn try_merge_leaf<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     leaf_num: LPageId,
     path: &[LPageId],
@@ -994,7 +986,7 @@ async fn try_merge_leaf<B: BufferPool>(
 /// Inner page merges are not cascaded — only leaf merges are performed.
 /// Underfull inner pages remain in the tree but are functionally correct.
 pub(super) async fn delete<B: BufferPool>(
-    bp: &'static B,
+    bp: &'_ B,
     file_id: FileId,
     key: &[u8],
     rid: RecordId,
