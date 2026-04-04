@@ -23,7 +23,7 @@ pub struct TcpServer {
 impl TcpServer {
     pub async fn new(config: AbdbConfig) -> Self {
         let page_directory = Arc::new(
-            BTreePageDirectory::open(config.data_dir.join("/page.dir"))
+            BTreePageDirectory::open(config.data_dir.join("page.dir"))
                 .await
                 .expect("Could not create page directory"),
         );
@@ -48,7 +48,7 @@ impl TcpServer {
         }
     }
 
-    pub async fn listen(self: Arc<Self>) -> ! {
+    pub async fn listen(self: Arc<Self>) {
         let listener = TcpListener::bind(format!("127.0.0.1:{}", self.config.port))
             .await
             .expect("Error while creating TcpListener");
