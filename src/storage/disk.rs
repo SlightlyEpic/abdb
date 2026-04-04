@@ -201,7 +201,9 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
     }
 }
 
-impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager for DiskManagerImpl<D, A> {
+impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
+    for DiskManagerImpl<D, A>
+{
     fn read_page<'a>(
         &'a self,
         id: LPageId,

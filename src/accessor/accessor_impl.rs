@@ -33,7 +33,7 @@ pub struct AccessorImpl<B: BufferPool> {
     catalog: RwLock<CatalogCache>,
 }
 
-impl<B: BufferPool> AccessorImpl< B> {
+impl<B: BufferPool> AccessorImpl<B> {
     /// Create a new AccessorImpl with the given buffer pool.
     ///
     /// Initializes the catalog cache with system table definitions.

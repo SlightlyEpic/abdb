@@ -31,7 +31,6 @@ pub enum Statement {
     Explain(Box<Statement>),
 }
 
-
 #[derive(Debug, Clone)]
 pub struct CreateTableStmt {
     pub name: String,
@@ -140,8 +139,14 @@ pub enum SelectItem {
 
 #[derive(Debug, Clone)]
 pub enum TableRef {
-    Named { name: String, alias: Option<String> },
-    Subquery { query: Box<SelectStmt>, alias: String },
+    Named {
+        name: String,
+        alias: Option<String>,
+    },
+    Subquery {
+        query: Box<SelectStmt>,
+        alias: String,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -174,11 +174,7 @@ async fn alloc_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<LPageId
 }
 
 /// Update the root_page pointer in the index file header.
-async fn set_root_page<B: BufferPool>(
-    bp: &'_ B,
-    file_id: FileId,
-    new_root: LPageId,
-) -> Result<()> {
+async fn set_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId, new_root: LPageId) -> Result<()> {
     let header_loc = page_loc(file_id, 0);
     let mut guard = bp
         .fetch_page_at_loc_write(header_loc)
@@ -774,11 +770,7 @@ pub(super) async fn insert<B: BufferPool>(
 /// Look up a single key in the B-Tree index.
 ///
 /// Only valid for unique indexes. Returns the RecordId of the matching tuple.
-pub(super) async fn get<B: BufferPool>(
-    bp: &'_ B,
-    file_id: FileId,
-    key: &[u8],
-) -> Result<RecordId> {
+pub(super) async fn get<B: BufferPool>(bp: &'_ B, file_id: FileId, key: &[u8]) -> Result<RecordId> {
     let key_u64 = key_from_bytes(key);
 
     let root_page = read_root_page(bp, file_id).await?;

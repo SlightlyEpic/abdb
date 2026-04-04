@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::buffer::evictor::{self, EvictionPolicy};
 
@@ -13,7 +13,7 @@ struct FrameInfo {
 pub struct LruKEvictor {
     k: usize,
     // Logical clock to track access recency without the overhead of SystemTime
-    current_timestamp: AtomicUsize, 
+    current_timestamp: AtomicUsize,
     state: Mutex<HashMap<usize, FrameInfo>>,
 }
 
@@ -30,7 +30,7 @@ impl LruKEvictor {
 impl EvictionPolicy for LruKEvictor {
     fn find_victim(&self) -> evictor::Result<usize> {
         let state = self.state.lock().unwrap();
-        
+
         let mut victim = None;
         let mut max_backward_k_dist = 0;
         let mut earliest_access_for_inf = usize::MAX;
@@ -56,7 +56,7 @@ impl EvictionPolicy for LruKEvictor {
                 // Evict the one whose K-th most recent access is the oldest.
                 let kth_access = *info.history.front().unwrap();
                 let distance = current_ts.saturating_sub(kth_access);
-                
+
                 if distance > max_backward_k_dist {
                     max_backward_k_dist = distance;
                     victim = Some(frame_id);
@@ -70,14 +70,14 @@ impl EvictionPolicy for LruKEvictor {
     fn record_access(&self, frame_id: usize) {
         let mut state = self.state.lock().unwrap();
         let ts = self.current_timestamp.fetch_add(1, Ordering::SeqCst);
-        
+
         let info = state.entry(frame_id).or_insert(FrameInfo {
             history: VecDeque::with_capacity(self.k),
             evictable: false, // Assume safely un-evictable until explicitly allowed
         });
-        
+
         info.history.push_back(ts);
-        
+
         // Truncate history to keep only the last K accesses
         if info.history.len() > self.k {
             info.history.pop_front();
@@ -86,13 +86,13 @@ impl EvictionPolicy for LruKEvictor {
 
     fn set_evictable(&self, frame_id: usize, evictable: bool) {
         let mut state = self.state.lock().unwrap();
-        
+
         // If the frame doesn't exist in the evictor yet, initialize it
         let info = state.entry(frame_id).or_insert(FrameInfo {
             history: VecDeque::with_capacity(self.k),
             evictable,
         });
-        
+
         info.evictable = evictable;
     }
 

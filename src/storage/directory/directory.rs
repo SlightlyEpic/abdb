@@ -233,8 +233,9 @@ impl BTreePageDirectory {
             let uber = UberPageHeader::read_from_prefix(buffer.as_ref())
                 .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
                 .0;
-            let page_type = PageType::try_from(uber.page_type_id)
-                .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+            let page_type = PageType::try_from(uber.page_type_id).map_err(|_| {
+                Error::PageCorruption(format!("invalid page type {}", uber.page_type_id))
+            })?;
 
             match page_type {
                 PageType::DirectoryInner => {
@@ -269,8 +270,9 @@ impl BTreePageDirectory {
             let uber = UberPageHeader::read_from_prefix(buffer.as_ref())
                 .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
                 .0;
-            let page_type = PageType::try_from(uber.page_type_id)
-                .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+            let page_type = PageType::try_from(uber.page_type_id).map_err(|_| {
+                Error::PageCorruption(format!("invalid page type {}", uber.page_type_id))
+            })?;
 
             match page_type {
                 PageType::DirectoryInner => {
@@ -330,9 +332,9 @@ impl BTreePageDirectory {
         {
             let mut new_page = DirectoryLeafPage::init(new_buf.as_mut(), new_leaf_id);
             for (k, p) in &entries[mid..] {
-                new_page.insert_entry(*k, *p).map_err(|e| {
-                    Error::PageCorruption(format!("split insert failed: {:?}", e))
-                })?;
+                new_page
+                    .insert_entry(*k, *p)
+                    .map_err(|e| Error::PageCorruption(format!("split insert failed: {:?}", e)))?;
             }
             new_page.set_next_page(DirectoryLeafPage::new(leaf_buf.as_ref()).next_page());
             new_page.set_prev_page(leaf_id);
@@ -405,7 +407,8 @@ impl BTreePageDirectory {
         let new_inner_id = self.alloc_dir_page().await;
         let mut new_buf = Box::new([0u8; PAGE_BUF_SIZE]);
         {
-            let mut new_page = DirectoryInnerPage::init(new_buf.as_mut(), new_inner_id, new_leftmost);
+            let mut new_page =
+                DirectoryInnerPage::init(new_buf.as_mut(), new_inner_id, new_leftmost);
             for entry in &entries[mid + 1..] {
                 new_page
                     .insert_separator(entry.separator_key, entry.right_child)
@@ -473,7 +476,8 @@ impl BTreePageDirectory {
         let new_root_id = self.alloc_dir_page().await;
         let mut new_root_buf = Box::new([0u8; PAGE_BUF_SIZE]);
         {
-            let mut root_page = DirectoryInnerPage::init(new_root_buf.as_mut(), new_root_id, old_root);
+            let mut root_page =
+                DirectoryInnerPage::init(new_root_buf.as_mut(), new_root_id, old_root);
             root_page
                 .insert_separator(sep_key, new_child)
                 .map_err(|e| Error::PageCorruption(format!("new root insert failed: {:?}", e)))?;
@@ -502,7 +506,11 @@ impl PageDirectory for BTreePageDirectory {
         }
     }
 
-    fn add_page(&self, page_id: LPageId, physical_id: PPageId) -> impl Future<Output = Result<()>> + '_ + Send {
+    fn add_page(
+        &self,
+        page_id: LPageId,
+        physical_id: PPageId,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
         async move {
             let root = *self.root_page.read().await;
 
@@ -573,7 +581,11 @@ impl PageDirectory for BTreePageDirectory {
         }
     }
 
-    fn update_page(&self, page_id: LPageId, physical_id: PPageId) -> impl Future<Output = Result<()>> + '_ + Send {
+    fn update_page(
+        &self,
+        page_id: LPageId,
+        physical_id: PPageId,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
         async move {
             let root = *self.root_page.read().await;
             if root == 0 {
@@ -638,10 +650,7 @@ impl PageDirectory for BTreePageDirectory {
                 return Ok(());
             }
 
-            let mut file = OpenOptions::new()
-                .write(true)
-                .open(&self.file_path)
-                .await?;
+            let mut file = OpenOptions::new().write(true).open(&self.file_path).await?;
 
             let cache = self.cache.read().await;
             for dir_page_id in &dirty_pages {
