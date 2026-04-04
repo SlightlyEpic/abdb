@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, sync::Arc};
 
@@ -8,10 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
 use crate::{
-    common::{
-        aliases::{self, FileId, LPageId, PPageId},
-        constants::PAGE_BUF_SIZE,
-    },
+    common::aliases::{self, FileId, LPageId, PPageId},
     storage::{allocator, directory},
 };
 
@@ -146,6 +143,16 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
     pub async fn register_file(&self, file_id: FileId, file_type: FileType) {
         let mut types = self.file_types.write().await;
         types.insert(file_id, file_type);
+    }
+
+    /// Get the page directory.
+    pub fn page_directory(&self) -> &Arc<D> {
+        &self.page_directory
+    }
+
+    /// Get the page allocator.
+    pub fn allocator(&self) -> &Arc<A> {
+        &self.allocator
     }
 
     /// Get the path for a file.

@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 
 use crate::common::{
     aliases::{self, DirPageId, LPageId, PPageId},
-    constants::{DIRECTORY_FILE_ID, PAGE_BUF_SIZE},
+    constants::PAGE_BUF_SIZE,
 };
 use crate::page::{
     PageType, UberPageHeader,
