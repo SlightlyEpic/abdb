@@ -9,7 +9,7 @@ fn main() {
         port: 8080,
         buffer_frame_size: 1024,
         data_dir: PathBuf::from("/var/lib/abdb"),
-        evictor_lru_k_size: 2
+        evictor_lru_k_size: 2,
     };
 
     tokio::task::spawn_blocking(async || {

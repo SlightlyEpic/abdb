@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -49,11 +49,16 @@ impl TcpServer {
     }
 
     pub async fn listen(self: Arc<Self>) -> ! {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.config.port)).await.expect("Error while creating TcpListener");
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.config.port))
+            .await
+            .expect("Error while creating TcpListener");
         println!("Database server listening on 127.0.0.1:8080");
 
         loop {
-            let (mut socket, addr) = listener.accept().await.expect("Error while accepting connection");
+            let (mut socket, addr) = listener
+                .accept()
+                .await
+                .expect("Error while accepting connection");
             println!("New client connected: {}", addr);
             let server = Arc::clone(&self);
 
@@ -103,11 +108,15 @@ impl TcpServer {
 
     async fn process_sql(&self, sql: &str) -> String {
         let mut binder = Binder::new(&*self.accessor);
-        let parser = Parser::new(&PostgreSqlDialect{});
+        let parser = Parser::new(&PostgreSqlDialect {});
         let planner = Planner::new(&*self.accessor);
         let optimizer = Optimizer::new(&*self.accessor);
 
-        let stmt = parser.try_with_sql(sql).expect("Parser error").parse_statement().expect("Parser error");
+        let stmt = parser
+            .try_with_sql(sql)
+            .expect("Parser error")
+            .parse_statement()
+            .expect("Parser error");
         let bound_stmt = binder.bind_statement(&stmt).expect("Binder error");
         let logical_plan = planner.plan(&bound_stmt).expect("Planner error");
         let physical_plan = optimizer.optimize(logical_plan);
