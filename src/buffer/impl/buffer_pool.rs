@@ -680,12 +680,15 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         }
     }
 
-    fn new_page(&self) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send + '_ {
+    fn new_page(
+        &self,
+        file_id: aliases::FileId,
+    ) -> impl Future<Output = buffer::Result<Self::WriteGuard<'_>>> + Send + '_ {
         async move {
             // 1. Allocate logical and physical page IDs via disk manager
             let (lpage_id, ppage_id) = self
                 .disk_manager
-                .new_page()
+                .new_page(file_id)
                 .await
                 .map_err(|e| buffer::Error::StorageError(e))?;
 

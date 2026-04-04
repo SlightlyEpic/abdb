@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::RwLock as StdRwLock;
 use std::{io, sync::Arc};
 
 use tokio::fs::{File, OpenOptions};
@@ -65,7 +64,10 @@ pub trait DiskManager: Send + Sync + 'static {
         target: &'a aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + 'a + Send;
 
-    fn new_page(&self) -> impl Future<Output = Result<(aliases::LPageId, aliases::PPageId)>> + '_ + Send;
+    fn new_page(
+        &self,
+        file_id: aliases::FileId,
+    ) -> impl Future<Output = Result<(aliases::LPageId, aliases::PPageId)>> + '_ + Send;
 }
 
 // ============================================================================
@@ -114,8 +116,6 @@ pub struct DiskManagerImpl<D: directory::PageDirectory, A: allocator::PageAlloca
     file_handles: RwLock<HashMap<FileId, Arc<RwLock<File>>>>,
     /// Mapping of FileId -> FileType for path construction
     file_types: RwLock<HashMap<FileId, FileType>>,
-    /// Default file for new_page allocations (set via set_default_file)
-    default_file_id: StdRwLock<Option<FileId>>,
 }
 
 impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D, A> {
@@ -139,19 +139,7 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
             next_lpage_id: AtomicU32::new(next_lpage_id),
             file_handles: RwLock::new(HashMap::new()),
             file_types: RwLock::new(HashMap::new()),
-            default_file_id: StdRwLock::new(None),
         }
-    }
-
-    /// Set the default file for new_page allocations.
-    pub fn set_default_file(&self, file_id: FileId) {
-        let mut default = self.default_file_id.write().unwrap();
-        *default = Some(file_id);
-    }
-
-    /// Get the default file ID if set.
-    pub fn default_file(&self) -> Option<FileId> {
-        *self.default_file_id.read().unwrap()
     }
 
     /// Register a file with its type.
@@ -291,13 +279,11 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         }
     }
 
-    fn new_page(&self) -> impl Future<Output = Result<(LPageId, PPageId)>> + '_ + Send {
+    fn new_page(
+        &self,
+        file_id: FileId,
+    ) -> impl Future<Output = Result<(LPageId, PPageId)>> + '_ + Send {
         async move {
-            // Get the default file ID
-            let file_id = self
-                .default_file()
-                .expect("default_file must be set before calling new_page");
-
             // Allocate a new logical page ID
             let lpage_id = self.alloc_lpage_id();
 
@@ -310,25 +296,4 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
             Ok((lpage_id, ppage_id))
         }
     }
-}
-
-/// Create a new page in a specific file and register it in the directory.
-///
-/// This is a helper function that combines allocation and directory registration.
-pub async fn allocate_page_in_file<D: directory::PageDirectory, A: allocator::PageAllocator>(
-    disk_manager: &DiskManagerImpl<D, A>,
-    page_directory: &D,
-    allocator: &A,
-    file_id: FileId,
-) -> Result<(LPageId, PPageId)> {
-    // Allocate logical page ID
-    let lpage_id = disk_manager.alloc_lpage_id();
-
-    // Allocate physical location in file
-    let ppage_id = allocator.allocate(file_id).await?;
-
-    // Register in page directory
-    page_directory.add_page(lpage_id, ppage_id).await?;
-
-    Ok((lpage_id, ppage_id))
 }
