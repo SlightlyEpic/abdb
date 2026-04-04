@@ -493,8 +493,8 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                         break (idx, true, None);
                     }
 
-                    // 3. Publish to the PHYSICAL map. 
-                    // Note: We cannot publish to the logical map yet because we 
+                    // 3. Publish to the PHYSICAL map.
+                    // Note: We cannot publish to the logical map yet because we
                     // don't know the LPageId until we read the disk!
                     map.insert(loc, vacant_idx);
                 }
@@ -520,8 +520,7 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
 
                 // 4. Read from disk using the physical location.
                 // Assuming this returns the LPageId associated with this physical location.
-                self
-                    .disk_manager
+                self.disk_manager
                     .read_page_at_loc(loc, frame_slice)
                     .await
                     .map_err(|e| buffer::Error::StorageError(e))?;
@@ -534,8 +533,8 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                 {
                     let mut meta = self.frame_meta_write();
                     meta[frame_idx] = FrameMeta::Loaded {
-                        lpage_id,      // We finally have the logical ID
-                        ppage_id: loc, 
+                        lpage_id, // We finally have the logical ID
+                        ppage_id: loc,
                         dirty: false,
                     };
                 }
@@ -551,7 +550,7 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
             }
         }
     }
-    
+
     fn fetch_page_at_loc_read(
         &self,
         loc: aliases::PPageId,

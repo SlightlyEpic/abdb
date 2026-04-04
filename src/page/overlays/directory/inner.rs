@@ -23,7 +23,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{aliases::LPageId, constants::PAGE_BUF_SIZE},
-    page::{header::UBER_HEADER_SIZE, PageType, UberPageHeader},
+    page::{PageType, UberPageHeader, header::UBER_HEADER_SIZE},
 };
 
 use super::error::OverlayError;
@@ -369,11 +369,10 @@ where
     /// Read-modify-write the inner header.
     #[inline]
     fn update_inner_header(&mut self, f: impl FnOnce(&mut DirectoryInnerHeader)) {
-        let mut header = DirectoryInnerHeader::read_from_prefix(
-            &self.data.as_ref()[UBER_HEADER_SIZE..],
-        )
-        .expect("DirectoryInnerHeader must fit")
-        .0;
+        let mut header =
+            DirectoryInnerHeader::read_from_prefix(&self.data.as_ref()[UBER_HEADER_SIZE..])
+                .expect("DirectoryInnerHeader must fit")
+                .0;
 
         f(&mut header);
 
@@ -453,7 +452,10 @@ where
                 .copy_within(src_start..(src_start + count), dst_start);
         }
 
-        self.set_entry(insert_pos, DirectoryInnerEntry::new(separator_key, right_child));
+        self.set_entry(
+            insert_pos,
+            DirectoryInnerEntry::new(separator_key, right_child),
+        );
         self.set_num_keys(num_keys + 1);
 
         Ok(())
@@ -483,11 +485,7 @@ where
     }
 
     /// Update the right_child pointer for a separator at the given index.
-    pub fn update_child(
-        &mut self,
-        index: u16,
-        new_child: LPageId,
-    ) -> Result<(), OverlayError> {
+    pub fn update_child(&mut self, index: u16, new_child: LPageId) -> Result<(), OverlayError> {
         let num_keys = self.num_keys();
         if index >= num_keys {
             return Err(OverlayError::IndexOutOfBounds {
@@ -612,7 +610,10 @@ mod tests {
         page.insert_separator(100, 1).unwrap();
 
         let result = page.insert_separator(100, 2);
-        assert!(matches!(result, Err(OverlayError::DuplicateKey { key: 100 })));
+        assert!(matches!(
+            result,
+            Err(OverlayError::DuplicateKey { key: 100 })
+        ));
     }
 
     #[test]

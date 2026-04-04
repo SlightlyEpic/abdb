@@ -7,10 +7,7 @@ use crate::{
         constants::PAGE_BUF_SIZE,
         txn::Txn,
     },
-    page::overlays::{
-        file_header::HeapFileHeaderPage,
-        table::HeapPage,
-    },
+    page::overlays::{file_header::HeapFileHeaderPage, table::HeapPage},
 };
 
 use super::{
@@ -45,7 +42,10 @@ pub(super) async fn scan<B: BufferPool>(
     txn: Txn,
 ) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
     // Read file header to get page count
-    let header_loc = PPageId { file: file_id, offset: 0 };
+    let header_loc = PPageId {
+        file: file_id,
+        offset: 0,
+    };
     let guard = bp
         .fetch_page_at_loc_read(header_loc)
         .await
@@ -163,7 +163,10 @@ pub(super) async fn insert<B: BufferPool>(
     full_tuple.extend_from_slice(tuple);
 
     // Read file header for page count
-    let header_loc = PPageId { file: file_id, offset: 0 };
+    let header_loc = PPageId {
+        file: file_id,
+        offset: 0,
+    };
     let guard = bp
         .fetch_page_at_loc_read(header_loc)
         .await

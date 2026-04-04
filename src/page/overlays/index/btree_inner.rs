@@ -27,7 +27,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{aliases::LPageId, constants::PAGE_BUF_SIZE},
-    page::{header::UBER_HEADER_SIZE, PageType, UberPageHeader},
+    page::{PageType, UberPageHeader, header::UBER_HEADER_SIZE},
 };
 
 use super::error::OverlayError;
@@ -484,11 +484,7 @@ where
     }
 
     /// Update the right_child pointer for a separator at the given index.
-    pub fn update_child(
-        &mut self,
-        index: u16,
-        new_child: LPageId,
-    ) -> Result<(), OverlayError> {
+    pub fn update_child(&mut self, index: u16, new_child: LPageId) -> Result<(), OverlayError> {
         let num_keys = self.num_keys();
         if index >= num_keys {
             return Err(OverlayError::IndexOutOfBounds {
@@ -498,10 +494,7 @@ where
         }
 
         let entry = self.entry(index)?;
-        self.set_entry(
-            index,
-            BTreeInnerEntry::new(entry.separator_key, new_child),
-        );
+        self.set_entry(index, BTreeInnerEntry::new(entry.separator_key, new_child));
         Ok(())
     }
 }
@@ -613,7 +606,10 @@ mod tests {
         page.insert_separator(100, 1).unwrap();
 
         let result = page.insert_separator(100, 2);
-        assert!(matches!(result, Err(OverlayError::DuplicateKey { key: 100 })));
+        assert!(matches!(
+            result,
+            Err(OverlayError::DuplicateKey { key: 100 })
+        ));
     }
 
     #[test]

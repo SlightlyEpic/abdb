@@ -4,19 +4,13 @@ use crate::page::PageType;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayError {
     /// Page type does not match expected type for this overlay.
-    TypeMismatch {
-        expected: PageType,
-        found: PageType,
-    },
+    TypeMismatch { expected: PageType, found: PageType },
 
     /// Invalid page type byte encountered (not a valid PageType variant).
     InvalidPageType(u8),
 
     /// Page has reached maximum capacity.
-    PageFull {
-        capacity: usize,
-        attempted: usize,
-    },
+    PageFull { capacity: usize, attempted: usize },
 
     /// Attempted to insert a key that already exists.
     DuplicateKey { key: u64 },
@@ -25,10 +19,7 @@ pub enum OverlayError {
     IndexOutOfBounds { index: u16, max: u16 },
 
     /// Reserved for future MVCC support: transaction visibility error.
-    TransactionVisibility {
-        entry_txn: u64,
-        current_txn: u64,
-    },
+    TransactionVisibility { entry_txn: u64, current_txn: u64 },
 }
 
 impl std::fmt::Display for OverlayError {

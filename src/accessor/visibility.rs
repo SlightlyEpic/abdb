@@ -1,4 +1,7 @@
-use crate::common::{aliases::TxnId, txn::{IsolationLevel, Txn}};
+use crate::common::{
+    aliases::TxnId,
+    txn::{IsolationLevel, Txn},
+};
 use crate::databox::HEADER_SIZE;
 
 /// Size of the MVCC tuple header in bytes (u64 XMIN + u64 XMAX).
@@ -7,9 +10,7 @@ pub const TUPLE_HEADER_SIZE: usize = HEADER_SIZE as usize;
 /// Read the XMIN (creating transaction) from a raw tuple.
 #[inline]
 pub fn read_xmin(tuple: &[u8]) -> TxnId {
-    let bytes: [u8; 8] = tuple[0..8]
-        .try_into()
-        .expect("tuple too short for XMIN");
+    let bytes: [u8; 8] = tuple[0..8].try_into().expect("tuple too short for XMIN");
     u64::from_le_bytes(bytes)
 }
 
@@ -17,9 +18,7 @@ pub fn read_xmin(tuple: &[u8]) -> TxnId {
 /// Returns 0 if the tuple has not been deleted.
 #[inline]
 pub fn read_xmax(tuple: &[u8]) -> TxnId {
-    let bytes: [u8; 8] = tuple[8..16]
-        .try_into()
-        .expect("tuple too short for XMAX");
+    let bytes: [u8; 8] = tuple[8..16].try_into().expect("tuple too short for XMAX");
     u64::from_le_bytes(bytes)
 }
 

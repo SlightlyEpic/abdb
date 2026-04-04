@@ -2,10 +2,7 @@ use std::mem::size_of;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
-    common::{
-        aliases::OId,
-        constants::PAGE_BUF_SIZE,
-    },
+    common::{aliases::OId, constants::PAGE_BUF_SIZE},
     page::{PageType, UberPageHeader, overlays},
 };
 
@@ -32,10 +29,7 @@ pub struct Data {
 #[derive(Debug)]
 pub enum Error {
     ConvertError(overlays::common::ConvertError),
-    TypeMismatch {
-        expected: PageType,
-        found: PageType,
-    },
+    TypeMismatch { expected: PageType, found: PageType },
     InvalidPageType(u8),
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    catalog::{self, schema, Column, Index, Table},
+    catalog::{self, Column, Index, Table, schema},
     common::{aliases::OId, constants},
 };
 
@@ -35,21 +35,24 @@ impl CatalogCache {
         };
 
         // Register system tables (expect succeeds: these OIDs are unique by construction)
-        cache.register_table(schema::SYS_TABLE_TABLES.clone())
+        cache
+            .register_table(schema::SYS_TABLE_TABLES.clone())
             .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_TABLES_OID,
             schema::SYS_COLUMNS_TABLES_TABLE.to_vec(),
         );
 
-        cache.register_table(schema::SYS_TABLE_COLUMNS.clone())
+        cache
+            .register_table(schema::SYS_TABLE_COLUMNS.clone())
             .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_COLUMNS_OID,
             schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec(),
         );
 
-        cache.register_table(schema::SYS_TABLE_INDEXES.clone())
+        cache
+            .register_table(schema::SYS_TABLE_INDEXES.clone())
             .expect("duplicate system table OID");
         cache.register_columns(
             constants::SYS_TABLE_INDEXES_OID,

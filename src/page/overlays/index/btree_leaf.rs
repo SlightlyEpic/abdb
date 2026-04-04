@@ -30,7 +30,7 @@ use crate::{
         aliases::{LPageId, SlotId},
         constants::PAGE_BUF_SIZE,
     },
-    page::{header::UBER_HEADER_SIZE, PageType, UberPageHeader},
+    page::{PageType, UberPageHeader, header::UBER_HEADER_SIZE},
 };
 
 use super::error::OverlayError;
@@ -384,10 +384,9 @@ where
     /// Read-modify-write the leaf header.
     #[inline]
     fn update_leaf_header(&mut self, f: impl FnOnce(&mut BTreeLeafHeader)) {
-        let mut header =
-            BTreeLeafHeader::read_from_prefix(&self.data.as_ref()[UBER_HEADER_SIZE..])
-                .expect("BTreeLeafHeader must fit")
-                .0;
+        let mut header = BTreeLeafHeader::read_from_prefix(&self.data.as_ref()[UBER_HEADER_SIZE..])
+            .expect("BTreeLeafHeader must fit")
+            .0;
 
         f(&mut header);
 
@@ -661,7 +660,10 @@ mod tests {
         page.insert_entry(100, 1, 0).unwrap();
 
         let result = page.insert_entry(100, 2, 0);
-        assert!(matches!(result, Err(OverlayError::DuplicateKey { key: 100 })));
+        assert!(matches!(
+            result,
+            Err(OverlayError::DuplicateKey { key: 100 })
+        ));
     }
 
     #[test]

@@ -28,7 +28,11 @@ pub trait Accessor: Send + Sync + 'static {
         &self,
         txn: Txn,
         table_oid: aliases::OId,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send;
+    ) -> impl Future<
+        Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>,
+    >
+    + '_
+    + Send;
     fn table_insert(
         &self,
         txn: Txn,
@@ -54,7 +58,11 @@ pub trait Accessor: Send + Sync + 'static {
         index_oid: aliases::OId,
         start_key: Option<Vec<u8>>,
         end_key: Option<Vec<u8>>,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send;
+    ) -> impl Future<
+        Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>,
+    >
+    + '_
+    + Send;
     fn index_insert(
         &self,
         txn: Txn,

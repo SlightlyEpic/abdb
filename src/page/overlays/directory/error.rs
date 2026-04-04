@@ -7,10 +7,7 @@ pub enum OverlayError {
     /// This indicates either:
     /// - A programming error (wrong page passed to overlay)
     /// - Data corruption
-    TypeMismatch {
-        expected: PageType,
-        found: PageType,
-    },
+    TypeMismatch { expected: PageType, found: PageType },
 
     /// Invalid page type byte encountered (not a valid PageType variant).
     InvalidPageType(u8),
@@ -18,10 +15,7 @@ pub enum OverlayError {
     /// Page has reached maximum capacity.
     /// For leaf pages: 253 entries maximum
     /// For inner pages: 254 separator keys maximum
-    PageFull {
-        capacity: usize,
-        attempted: usize,
-    },
+    PageFull { capacity: usize, attempted: usize },
 
     /// Attempted to insert a key that already exists.
     /// Directory B-Tree maps logical PageIds to physical locations,
@@ -32,10 +26,7 @@ pub enum OverlayError {
     IndexOutOfBounds { index: u16, max: u16 },
 
     /// Reserved for future MVCC support: transaction visibility error.
-    TransactionVisibility {
-        entry_txn: u64,
-        current_txn: u64,
-    },
+    TransactionVisibility { entry_txn: u64, current_txn: u64 },
 }
 
 impl std::fmt::Display for OverlayError {
@@ -51,7 +42,10 @@ impl std::fmt::Display for OverlayError {
             Self::InvalidPageType(byte) => {
                 write!(f, "Invalid page type byte: {}", byte)
             }
-            Self::PageFull { capacity, attempted } => {
+            Self::PageFull {
+                capacity,
+                attempted,
+            } => {
                 write!(
                     f,
                     "Page full: capacity is {}, attempted to add entry #{}",

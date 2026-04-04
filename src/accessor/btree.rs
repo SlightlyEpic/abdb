@@ -5,7 +5,7 @@ use zerocopy::FromBytes;
 use crate::{
     buffer::BufferPool,
     common::{
-        aliases::{FileId, LPageId, PageBuffer, PPageId, RecordId},
+        aliases::{FileId, LPageId, PPageId, PageBuffer, RecordId},
         constants::PAGE_BUF_SIZE,
         txn::Txn,
     },
@@ -14,8 +14,8 @@ use crate::{
         overlays::{
             file_header::IndexFileHeaderPage,
             index::{
-                BTreeInnerEntry, BTreeInnerPage, BTreeLeafEntry, BTreeLeafPage,
-                INNER_MAX_KEYS, LEAF_MAX_ENTRIES,
+                BTreeInnerEntry, BTreeInnerPage, BTreeLeafEntry, BTreeLeafPage, INNER_MAX_KEYS,
+                LEAF_MAX_ENTRIES,
             },
         },
     },
@@ -79,8 +79,9 @@ async fn find_leaf<B: BufferPool>(
         let uber = UberPageHeader::read_from_prefix(&*guard)
             .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
             .0;
-        let page_type = PageType::try_from(uber.page_type_id)
-            .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+        let page_type = PageType::try_from(uber.page_type_id).map_err(|_| {
+            Error::PageCorruption(format!("invalid page type {}", uber.page_type_id))
+        })?;
 
         match page_type {
             PageType::BTreeInner => {
@@ -124,8 +125,9 @@ async fn find_leaf_with_path<B: BufferPool>(
         let uber = UberPageHeader::read_from_prefix(&*guard)
             .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
             .0;
-        let page_type = PageType::try_from(uber.page_type_id)
-            .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+        let page_type = PageType::try_from(uber.page_type_id).map_err(|_| {
+            Error::PageCorruption(format!("invalid page type {}", uber.page_type_id))
+        })?;
 
         match page_type {
             PageType::BTreeInner => {
@@ -164,7 +166,8 @@ async fn alloc_page<B: BufferPool>(bp: &'static B, file_id: FileId) -> Result<LP
     let data = header
         .data_mut()
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
-    data.num_pages = data.num_pages
+    data.num_pages = data
+        .num_pages
         .checked_add(1)
         .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
     Ok(data.num_pages)
@@ -208,7 +211,8 @@ async fn alloc_and_set_root<B: BufferPool>(
         .data_mut()
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
     let old_root = data.root_page;
-    data.num_pages = data.num_pages
+    data.num_pages = data
+        .num_pages
         .checked_add(1)
         .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
     let new_root = data.num_pages;
@@ -422,7 +426,11 @@ async fn find_leaf_for_write<B: BufferPool>(
     file_id: FileId,
     root_page: LPageId,
     key: u64,
-) -> Result<(LPageId, B::WriteGuard<'static>, Vec<(LPageId, B::WriteGuard<'static>)>)> {
+) -> Result<(
+    LPageId,
+    B::WriteGuard<'static>,
+    Vec<(LPageId, B::WriteGuard<'static>)>,
+)> {
     let mut current = root_page;
     // Holds write guards for ancestors that are full and may cascade-split.
     let mut locked: Vec<(LPageId, B::WriteGuard<'static>)> = Vec::new();
@@ -437,8 +445,9 @@ async fn find_leaf_for_write<B: BufferPool>(
         let uber = UberPageHeader::read_from_prefix(&*guard)
             .map_err(|_| Error::PageCorruption("cannot read UberPageHeader".into()))?
             .0;
-        let page_type = PageType::try_from(uber.page_type_id)
-            .map_err(|_| Error::PageCorruption(format!("invalid page type {}", uber.page_type_id)))?;
+        let page_type = PageType::try_from(uber.page_type_id).map_err(|_| {
+            Error::PageCorruption(format!("invalid page type {}", uber.page_type_id))
+        })?;
 
         match page_type {
             PageType::BTreeInner => {
@@ -813,10 +822,7 @@ struct MergeInfo {
 ///
 /// Returns `Some(MergeInfo)` if a sibling exists, or `None` if the leaf
 /// is the only child (shouldn't happen in a valid B-Tree with >=2 children).
-fn find_merge_candidate(
-    parent_buf: &PageBuffer,
-    leaf_num: LPageId,
-) -> Option<MergeInfo> {
+fn find_merge_candidate(parent_buf: &PageBuffer, leaf_num: LPageId) -> Option<MergeInfo> {
     let parent = BTreeInnerPage::new(&*parent_buf);
     let num_keys = parent.num_keys();
 
@@ -1022,7 +1028,8 @@ pub(super) async fn delete<B: BufferPool>(
         // Verify the entry matches the expected RecordId. For unique indexes
         // this is always true, but for non-unique indexes this ensures we
         // delete the correct entry rather than an arbitrary one with the same key.
-        let entry = page.entry(pos)
+        let entry = page
+            .entry(pos)
             .map_err(|e| Error::PageCorruption(format!("leaf entry read: {:?}", e)))?;
         if entry.record_page != rid.page_id || entry.record_slot != rid.slot_id {
             return Err(Error::TupleNonExistent);

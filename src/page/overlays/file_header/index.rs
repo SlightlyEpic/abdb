@@ -31,10 +31,7 @@ pub struct Data {
 #[derive(Debug)]
 pub enum Error {
     ConvertError(overlays::common::ConvertError),
-    TypeMismatch {
-        expected: PageType,
-        found: PageType,
-    },
+    TypeMismatch { expected: PageType, found: PageType },
     InvalidPageType(u8),
 }
 

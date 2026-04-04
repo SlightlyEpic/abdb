@@ -10,7 +10,9 @@ use crate::{
 
 use super::{
     accessor::{Accessor, Result},
-    btree, catalog_cache::CatalogCache, heap,
+    btree,
+    catalog_cache::CatalogCache,
+    heap,
 };
 
 /// Concrete implementation of the Accessor trait.
@@ -93,8 +95,11 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         &self,
         txn: Txn,
         table_oid: aliases::OId,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send
-    {
+    ) -> impl Future<
+        Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>,
+    >
+    + '_
+    + Send {
         async move {
             let file_id = self.table_file_id(table_oid)?;
             heap::scan(self.bp, file_id, txn).await
@@ -145,8 +150,11 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         index_oid: aliases::OId,
         start_key: Option<Vec<u8>>,
         end_key: Option<Vec<u8>>,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>> + '_ + Send
-    {
+    ) -> impl Future<
+        Output = Result<impl Stream<Item = Result<(Vec<u8>, aliases::RecordId)>> + Send>,
+    >
+    + '_
+    + Send {
         async move {
             let file_id = self.index_file_id(index_oid)?;
             btree::scan(self.bp, file_id, txn, start_key, end_key).await
@@ -196,11 +204,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
 
     // -- Catalog operations (synchronous, from cache) ------------------------
 
-    fn catalog_get_table_by_name(
-        &self,
-        _txn: Txn,
-        table_name: String,
-    ) -> Result<catalog::Table> {
+    fn catalog_get_table_by_name(&self, _txn: Txn, table_name: String) -> Result<catalog::Table> {
         let cache = self.catalog.read().expect("catalog lock poisoned");
         cache.get_table_by_name(&table_name)
     }
@@ -214,11 +218,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         cache.get_table_by_oid(table_oid)
     }
 
-    fn catalog_get_index_by_name(
-        &self,
-        _txn: Txn,
-        index_name: String,
-    ) -> Result<catalog::Index> {
+    fn catalog_get_index_by_name(&self, _txn: Txn, index_name: String) -> Result<catalog::Index> {
         let cache = self.catalog.read().expect("catalog lock poisoned");
         cache.get_index_by_name(&index_name)
     }
