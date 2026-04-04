@@ -27,13 +27,13 @@ pub trait BufferPool: Send + Sync + 'static {
         Self: 'a;
 
     fn load_page_as_unevictable(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = ()> + Send + '_;
     fn load_page_loc_as_unevictable(
-        &'static self,
+        &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = ()> + Send + '_;
 
     /// Fetches a page for WRITING.
     /// 1. Checks if page is in memory.
@@ -41,27 +41,27 @@ pub trait BufferPool: Send + Sync + 'static {
     /// 3. Pins the frame.
     /// 4. Acquires an Exclusive Latch (lock) on the page.
     fn fetch_page_write(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
+    ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send + '_;
 
     /// Fetches a page for READING.
     /// (Similar to above, but acquires a Shared Latch)
     fn fetch_page_read(
-        &'static self,
+        &self,
         page_id: aliases::LPageId,
-    ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
+    ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send + '_;
 
     fn fetch_page_at_loc_write(
-        &'static self,
+        &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
+    ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send + '_;
 
     fn fetch_page_at_loc_read(
-        &'static self,
+        &self,
         loc: aliases::PPageId,
-    ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send;
+    ) -> impl Future<Output = Result<Self::ReadGuard<'_>>> + Send + '_;
 
-    fn new_page(&'static self) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send;
-    fn flush_all_dirty(&'static self) -> impl Future<Output = Result<()>> + Send;
+    fn new_page(&self) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send + '_;
+    fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send + '_;
 }

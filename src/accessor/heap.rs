@@ -21,8 +21,8 @@ use super::{
 
 /// State machine for the heap scan stream.
 /// Buffers one page's worth of visible tuples at a time.
-struct HeapScanState<B: BufferPool> {
-    bp: &'static B,
+struct HeapScanState<'a, B: BufferPool> {
+    bp: &'a B,
     file_id: FileId,
     num_pages: u32,
     current_page: u32,
@@ -36,8 +36,8 @@ struct HeapScanState<B: BufferPool> {
 /// Returns a lazy async stream that fetches one page at a time from the
 /// buffer pool, extracts visible tuples, and yields them with their RecordIds.
 /// Each item is wrapped in `Result` to propagate I/O and page corruption errors.
-pub(super) async fn scan<B: BufferPool>(
-    bp: &'static B,
+pub(super) async fn scan<'a, B: BufferPool>(
+    bp: &'a B,
     file_id: FileId,
     txn: Txn,
 ) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
@@ -150,8 +150,8 @@ pub(super) async fn scan<B: BufferPool>(
 /// operations leaves the header pointing at the new page (which will be empty
 /// on recovery) rather than the reverse (data written, header stale, page
 /// number reused on next insert).
-pub(super) async fn insert<B: BufferPool>(
-    bp: &'static B,
+pub(super) async fn insert<'a, B: BufferPool>(
+    bp: &'a B,
     file_id: FileId,
     txn: &Txn,
     tuple: &[u8],
@@ -259,8 +259,8 @@ pub(super) async fn insert<B: BufferPool>(
 // ============================================================================
 
 /// Fetch a single tuple by RecordId, checking MVCC visibility.
-pub(super) async fn get<B: BufferPool>(
-    bp: &'static B,
+pub(super) async fn get<'a, B: BufferPool>(
+    bp: &'a B,
     file_id: FileId,
     txn: &Txn,
     rid: aliases::RecordId,
@@ -304,8 +304,8 @@ pub(super) async fn get<B: BufferPool>(
 ///
 /// Checks visibility before deleting — a transaction cannot delete a tuple
 /// it cannot see, and cannot double-delete a tuple already marked deleted.
-pub(super) async fn delete<B: BufferPool>(
-    bp: &'static B,
+pub(super) async fn delete<'a, B: BufferPool>(
+    bp: &'a B,
     file_id: FileId,
     txn: &Txn,
     rid: aliases::RecordId,

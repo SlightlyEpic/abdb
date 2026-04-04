@@ -23,7 +23,7 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-pub trait Accessor: Send + Sync + 'static {
+pub trait Accessor: Send + Sync {
     fn table_scan(
         &self,
         txn: Txn,

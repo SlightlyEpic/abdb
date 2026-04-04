@@ -44,28 +44,28 @@ pub type Result<V> = std::result::Result<V, DiskError>;
 
 pub trait DiskManager: Send + Sync + 'static {
     fn read_page<'a>(
-        &self,
+        &'a self,
         id: aliases::LPageId,
         target: &'a mut aliases::PageBuffer,
-    ) -> impl Future<Output = Result<aliases::PPageId>> + '_ + Send;
+    ) -> impl Future<Output = Result<aliases::PPageId>> + 'a + Send;
 
     fn write_page<'a>(
-        &self,
+        &'a self,
         id: aliases::LPageId,
         target: &'a aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send;
+    ) -> impl Future<Output = Result<()>> + 'a + Send;
 
     fn read_page_at_loc<'a>(
-        &self,
+        &'a self,
         loc: aliases::PPageId,
         target: &'a mut aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send;
+    ) -> impl Future<Output = Result<()>> + 'a + Send;
 
     fn write_page_at_loc<'a>(
-        &self,
+        &'a self,
         loc: aliases::PPageId,
         target: &'a aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send;
+    ) -> impl Future<Output = Result<()>> + 'a + Send;
 
     fn new_page(&self) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
 }
@@ -203,10 +203,10 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
 
 impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager for DiskManagerImpl<D, A> {
     fn read_page<'a>(
-        &self,
+        &'a self,
         id: LPageId,
         target: &'a mut aliases::PageBuffer,
-    ) -> impl Future<Output = Result<PPageId>> + '_ + Send {
+    ) -> impl Future<Output = Result<PPageId>> + 'a + Send {
         async move {
             // Look up physical location
             let ppage_id = self.page_directory.lookup(id).await?;
@@ -219,10 +219,10 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager for D
     }
 
     fn write_page<'a>(
-        &self,
+        &'a self,
         id: LPageId,
         target: &'a aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send {
+    ) -> impl Future<Output = Result<()>> + 'a + Send {
         async move {
             // Look up physical location
             let ppage_id = self.page_directory.lookup(id).await?;
@@ -235,10 +235,10 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager for D
     }
 
     fn read_page_at_loc<'a>(
-        &self,
+        &'a self,
         loc: PPageId,
         target: &'a mut aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send {
+    ) -> impl Future<Output = Result<()>> + 'a + Send {
         async move {
             let handle = self.get_file(loc.file).await?;
             let mut file = handle.write().await;
@@ -251,10 +251,10 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager for D
     }
 
     fn write_page_at_loc<'a>(
-        &self,
+        &'a self,
         loc: PPageId,
         target: &'a aliases::PageBuffer,
-    ) -> impl Future<Output = Result<()>> + '_ + Send {
+    ) -> impl Future<Output = Result<()>> + 'a + Send {
         async move {
             let handle = self.get_file(loc.file).await?;
             let mut file = handle.write().await;
