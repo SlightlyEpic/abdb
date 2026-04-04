@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use futures::Stream;
 
@@ -27,7 +27,7 @@ use super::{
 /// `AccessorImpl` is `Send + Sync + 'static`. The catalog cache uses a
 /// `RwLock` for concurrent read access with exclusive write access during DDL.
 pub struct AccessorImpl<B: BufferPool> {
-    bp: Arc<B>,
+    bp: &'static B,
     catalog: RwLock<CatalogCache>,
 }
 
@@ -37,7 +37,7 @@ impl<B: BufferPool> AccessorImpl<B> {
     /// Initializes the catalog cache with system table definitions.
     /// In a production system, this would also scan the system tables
     /// to load user-created tables and indexes.
-    pub fn new(bp: Arc<B>) -> Self {
+    pub fn new(bp: &'static B) -> Self {
         Self {
             bp,
             catalog: RwLock::new(CatalogCache::new()),
@@ -97,7 +97,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     {
         async move {
             let file_id = self.table_file_id(table_oid)?;
-            heap::scan(Arc::clone(&self.bp), file_id, txn).await
+            heap::scan(self.bp, file_id, txn).await
         }
     }
 
@@ -109,7 +109,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     ) -> impl Future<Output = Result<aliases::RecordId>> + '_ + Send {
         async move {
             let file_id = self.table_file_id(table_oid)?;
-            heap::insert(&*self.bp, file_id, &txn, &tuple).await
+            heap::insert(self.bp, file_id, &txn, &tuple).await
         }
     }
 
@@ -121,7 +121,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     ) -> impl Future<Output = Result<Vec<u8>>> + '_ + Send {
         async move {
             let file_id = self.table_file_id(table_oid)?;
-            heap::get(&*self.bp, file_id, &txn, rid).await
+            heap::get(self.bp, file_id, &txn, rid).await
         }
     }
 
@@ -133,7 +133,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     ) -> impl Future<Output = Result<()>> + '_ + Send {
         async move {
             let file_id = self.table_file_id(table_oid)?;
-            heap::delete(&*self.bp, file_id, &txn, rid).await
+            heap::delete(self.bp, file_id, &txn, rid).await
         }
     }
 
@@ -149,7 +149,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     {
         async move {
             let file_id = self.index_file_id(index_oid)?;
-            btree::scan(Arc::clone(&self.bp), file_id, txn, start_key, end_key).await
+            btree::scan(self.bp, file_id, txn, start_key, end_key).await
         }
     }
 
@@ -163,7 +163,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         async move {
             let _ = txn; // reserved for future MVCC on indexes
             let file_id = self.index_file_id(index_oid)?;
-            btree::insert(&*self.bp, file_id, &key, rid).await
+            btree::insert(self.bp, file_id, &key, rid).await
         }
     }
 
@@ -176,7 +176,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         async move {
             let _ = txn;
             let file_id = self.index_file_id(index_oid)?;
-            btree::get(&*self.bp, file_id, &key).await
+            btree::get(self.bp, file_id, &key).await
         }
     }
 
@@ -190,7 +190,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         async move {
             let _ = txn;
             let file_id = self.index_file_id(index_oid)?;
-            btree::delete(&*self.bp, file_id, &key, rid).await
+            btree::delete(self.bp, file_id, &key, rid).await
         }
     }
 
