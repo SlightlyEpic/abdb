@@ -11,3 +11,6 @@ pub const SYS_TABLE_INDEXES_OID: aliases::OId = 2;
 pub const SYS_TABLE_TABLES_FID: aliases::FileId = 0;
 pub const SYS_TABLE_COLUMNS_FID: aliases::FileId = 1;
 pub const SYS_TABLE_INDEXES_FID: aliases::FileId = 2;
+
+/// FileId for the global page directory (.dir file)
+pub const DIRECTORY_FILE_ID: aliases::FileId = 1;

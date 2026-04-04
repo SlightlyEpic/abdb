@@ -1,5 +1,6 @@
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::buffer::PageWriteGuard as PageWriteGuardTrait;
@@ -10,7 +11,7 @@ use crate::page::overlays;
 use crate::storage::DiskManager;
 use crate::{buffer, storage};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum FrameMeta {
     Vacant,
     Loaded {
@@ -21,7 +22,7 @@ enum FrameMeta {
 }
 
 pub struct BufferPool<D: DiskManager> {
-    disk_manager: D,
+    disk_manager: Arc<D>,
     pub eviction_policy: Box<dyn EvictionPolicy>,
     num_frames: usize,
     buf: UnsafeCell<storage::AlignedBuffer>,
@@ -42,7 +43,7 @@ unsafe impl<D: DiskManager + Sync> Sync for BufferPool<D> {}
 impl<D: DiskManager> BufferPool<D> {
     pub fn new(
         num_frames: usize,
-        disk_manager: D,
+        disk_manager: Arc<D>,
         eviction_policy: Box<dyn EvictionPolicy>,
     ) -> Self {
         Self {
