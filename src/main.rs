@@ -4,18 +4,19 @@ use std::sync::Arc;
 use abdb::server::config::AbdbConfig;
 use abdb::server::tcp::TcpServer;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let config = AbdbConfig {
         port: 8080,
         buffer_frame_size: 1024,
-        data_dir: PathBuf::from("/var/lib/abdb"),
+        data_dir: PathBuf::from("./abdb_data"),
         evictor_lru_k_size: 2,
     };
 
-    tokio::task::spawn_blocking(async || {
-        let server = Arc::new(TcpServer::new(config).await);
-        server.listen().await;
-    });
+    let server = Arc::new(TcpServer::new(config).await);
+
+    print!("Starting abdb server");
+    server.listen().await;
 
     print!("Database server exiting.");
 }

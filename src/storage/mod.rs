@@ -1,5 +1,5 @@
 mod disk;
-pub use disk::{DiskError, DiskManager, DiskManagerImpl, FileType, Result, allocate_page_in_file};
+pub use disk::{DiskError, DiskManager, DiskManagerImpl, FileType, Result};
 
 mod aligned;
 pub use aligned::AlignedBuffer;

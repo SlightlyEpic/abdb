@@ -64,7 +64,10 @@ pub trait DiskManager: Send + Sync + 'static {
         target: &'a aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + 'a + Send;
 
-    fn new_page(&self) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
+    fn new_page(
+        &self,
+        file_id: aliases::FileId,
+    ) -> impl Future<Output = Result<(aliases::LPageId, aliases::PPageId)>> + '_ + Send;
 }
 
 // ============================================================================
@@ -276,45 +279,21 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         }
     }
 
-    fn new_page(&self) -> impl Future<Output = Result<LPageId>> + '_ + Send {
+    fn new_page(
+        &self,
+        file_id: FileId,
+    ) -> impl Future<Output = Result<(LPageId, PPageId)>> + '_ + Send {
         async move {
             // Allocate a new logical page ID
             let lpage_id = self.alloc_lpage_id();
 
-            // For now, we need to know which file this page belongs to.
-            // This is typically determined by the caller (accessor layer).
-            // The new_page in DiskManager is a bit awkward because it doesn't
-            // know which file to allocate in.
-            //
-            // For a proper implementation, new_page should take a file_id parameter
-            // or this should be handled at a higher level (accessor).
-            //
-            // For now, return the lpage_id. The physical allocation happens
-            // when the page is first written via the accessor layer which
-            // knows the file context.
+            // Allocate physical location in the file
+            let ppage_id = self.allocator.allocate(file_id).await?;
 
-            Ok(lpage_id)
+            // Register in the page directory
+            self.page_directory.add_page(lpage_id, ppage_id).await?;
+
+            Ok((lpage_id, ppage_id))
         }
     }
-}
-
-/// Create a new page in a specific file and register it in the directory.
-///
-/// This is a helper function that combines allocation and directory registration.
-pub async fn allocate_page_in_file<D: directory::PageDirectory, A: allocator::PageAllocator>(
-    disk_manager: &DiskManagerImpl<D, A>,
-    page_directory: &D,
-    allocator: &A,
-    file_id: FileId,
-) -> Result<(LPageId, PPageId)> {
-    // Allocate logical page ID
-    let lpage_id = disk_manager.alloc_lpage_id();
-
-    // Allocate physical location in file
-    let ppage_id = allocator.allocate(file_id).await?;
-
-    // Register in page directory
-    page_directory.add_page(lpage_id, ppage_id).await?;
-
-    Ok((lpage_id, ppage_id))
 }

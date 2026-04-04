@@ -106,7 +106,9 @@ impl<'a, D: DiskManager> buffer::PageWriteGuard for PageWriteGuard<'a, D> {
     }
 
     fn mark_dirty(&mut self) -> buffer::Result<()> {
-        todo!()
+        self._pin_guard
+            .buffer_pool
+            .mark_frame_dirty(self._pin_guard.frame_idx)
     }
 
     fn downgrade(self) -> Self::PageReadGuard {
