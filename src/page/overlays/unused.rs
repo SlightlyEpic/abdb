@@ -34,6 +34,10 @@ where
             .map_err(overlays::common::ConvertError::from)
             .map_err(|e| Error::ConvertError(e))
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 
 impl<T> UnusedPage<T>

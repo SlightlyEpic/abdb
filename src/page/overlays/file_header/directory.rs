@@ -97,6 +97,10 @@ where
             .map_err(overlays::common::ConvertError::from)
             .map_err(Error::ConvertError)
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 
 // ============================================================================

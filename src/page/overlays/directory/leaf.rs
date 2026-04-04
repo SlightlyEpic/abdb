@@ -342,6 +342,10 @@ where
     pub fn capacity(&self) -> u16 {
         MAX_ENTRIES
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 
 // ============================================================================

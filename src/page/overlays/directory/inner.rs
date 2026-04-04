@@ -320,6 +320,10 @@ where
     pub fn num_children(&self) -> u16 {
         self.num_keys() + 1
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 
 // ============================================================================

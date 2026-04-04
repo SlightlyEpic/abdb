@@ -526,9 +526,9 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                     .await
                     .map_err(|e| buffer::Error::StorageError(e))?;
 
-                let lpage_id = {
-                    let overlay = overlays::UnknownPage::new(&mut *frame_slice);
-                    overlay.uber_header().unwrap().page_id
+                let (lpage_id, frame_slice) = {
+                    let overlay = overlays::UnknownPage::new(frame_slice);
+                    (overlay.uber_header().unwrap().page_id, overlay.into_inner())
                 };
 
                 {

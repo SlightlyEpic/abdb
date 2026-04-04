@@ -108,6 +108,10 @@ where
                 "slot[{idx}] is possibly corrupted"
             )))
     }
+
+    pub fn into_inner(self) -> T {
+        self.data
+    }
 }
 
 impl<T> HeapPage<T>
