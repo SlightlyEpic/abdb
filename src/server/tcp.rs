@@ -1,12 +1,8 @@
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
-use crate::binder::Binder;
-use crate::optimizer::Optimizer;
-use crate::planner::Planner;
+use crate::session::Session;
 use crate::transaction::TransactionManager;
 // use crate::parser::Parser;
 use crate::{
@@ -19,7 +15,7 @@ use crate::{
 pub struct TcpServer {
     config: AbdbConfig,
     accessor: Arc<AccessorImpl<BufferPool<DiskManagerImpl<BTreePageDirectory, SimpleAllocator>>>>,
-    txn_mgr: Arc<TransactionManager>,
+    txn_manager: Arc<TransactionManager>,
 }
 
 impl TcpServer {
@@ -49,7 +45,7 @@ impl TcpServer {
         Self {
             config,
             accessor: Arc::new(accessor),
-            txn_mgr: Arc::new(TransactionManager::new())
+            txn_manager: Arc::new(TransactionManager::new())
         }
     }
 
@@ -68,7 +64,7 @@ impl TcpServer {
                 .await
                 .expect("Error while accepting connection");
             println!("New client connected: {}", addr);
-            let server = Arc::clone(&self);
+            let mut session = Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager));
 
             tokio::spawn(async move {
                 // 1. Split the socket so we can read and write independently
@@ -82,6 +78,7 @@ impl TcpServer {
                     query.clear(); // Clear the buffer for the next query
 
                     // 3. Read until we hit a newline (\n)
+                    // TODO: use ';' as delimiter
                     match buf_reader.read_line(&mut query).await {
                         Ok(0) => {
                             println!("Client {} disconnected.", addr);
@@ -96,7 +93,7 @@ impl TcpServer {
                             println!("Executing: {}", sql);
 
                             // 4. Send to your database engine
-                            let result = server.process_sql(sql).await;
+                            let result = session.execute_sql(sql).unwrap(); // TODO: remove unwrap
 
                             // 5. Send the result back to the client
                             if writer.write_all(result.as_bytes()).await.is_err() {
@@ -112,25 +109,5 @@ impl TcpServer {
                 }
             });
         }
-    }
-
-    async fn process_sql(&self, sql: &str) -> String {
-        let mut binder = Binder::new(&*self.accessor);
-        let parser = Parser::new(&PostgreSqlDialect {});
-        let planner = Planner::new(&*self.accessor);
-        let optimizer = Optimizer::new(&*self.accessor);
-
-        let stmt = parser
-            .try_with_sql(sql)
-            .expect("Parser error")
-            .parse_statement()
-            .expect("Parser error");
-        let bound_stmt = binder.bind_statement(&stmt).expect("Binder error");
-        let logical_plan = planner.plan(&bound_stmt).expect("Planner error");
-        let physical_plan = optimizer.optimize(logical_plan);
-
-        // Executor call
-
-        return format!("{:#?}", physical_plan);
     }
 }
