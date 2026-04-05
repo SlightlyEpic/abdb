@@ -94,7 +94,10 @@ impl TcpServer {
                             println!("Executing: {}", sql);
 
                             // 4. Send to your database engine
-                            let result = session.execute_sql(sql).unwrap(); // TODO: remove unwrap
+                            let result = match session.execute_sql(sql) {
+                                Ok(res) => res,
+                                Err(e) => e.to_string(),
+                            };
 
                             // 5. Send the result back to the client
                             if writer.write_all(result.as_bytes()).await.is_err() {

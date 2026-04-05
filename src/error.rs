@@ -7,6 +7,21 @@ pub enum DbError {
 
     #[error("bind error: {0}")]
     Bind(#[from] crate::binder::BindError),
+
+    #[error("cannot execute multiple statements at once")]
+    TooManyStatements,
+
+    #[error("no statement to execute")]
+    EmptyStatement,
+
+    #[error("transaction already in progress")]
+    TransactionAlreadyInProgress,
+
+    #[error("txn: {0}")]
+    InvalidTransactionState(String),
+    
+    #[error("not in transaction")]
+    NotInTransaction
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
