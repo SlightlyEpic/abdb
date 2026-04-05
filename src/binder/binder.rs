@@ -36,9 +36,6 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
 
     pub fn bind(&self, stmt: Statement) -> BindResult<BoundStatement> {
         match stmt {
-            Statement::BeginTransaction => Ok(BoundStatement::BeginTransaction),
-            Statement::Commit => Ok(BoundStatement::Commit),
-            Statement::Rollback => Ok(BoundStatement::Rollback),
             Statement::CreateTable(s) => self.bind_create_table(s),
             Statement::DropTable(s) => self.bind_drop_table(s),
             Statement::AlterTable(s) => self.bind_alter_table(s),
@@ -49,6 +46,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
             Statement::CreateIndex(s) => self.bind_create_index(s),
             Statement::DropIndex(s) => self.bind_drop_index(s),
             Statement::Explain(inner) => Ok(BoundStatement::Explain(Box::new(self.bind(*inner)?))),
+            _ => unreachable!()
         }
     }
 
@@ -466,7 +464,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
                 self.bind_join_condition(join.condition, join.kind, &scope, &bound_ref)?;
 
             bound_joins.push(BoundJoin {
-                kind: translate_join_kind(join.kind.clone()),
+                kind: translate_join_kind(join.kind),
                 table: bound_ref,
                 condition,
             });
