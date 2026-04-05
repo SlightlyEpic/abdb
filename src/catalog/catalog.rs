@@ -9,14 +9,14 @@ pub enum Error {
 
 pub type Result<V> = std::result::Result<V, Error>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Table {
     pub oid: aliases::OId,
     pub name: Cow<'static, str>,
     pub file_id: aliases::FileId,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Column {
     pub oid: aliases::OId,
     pub table_oid: aliases::OId,
@@ -26,7 +26,7 @@ pub struct Column {
     pub nullable: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Index {
     pub oid: aliases::OId,
     pub name: Cow<'static, str>,

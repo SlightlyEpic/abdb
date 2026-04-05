@@ -1,5 +1,5 @@
-pub mod plan_nodes;
-pub mod planner;
+mod plan;
+mod planner;
 
-pub use plan_nodes::*;
-pub use planner::*;
+pub use plan::*;
+pub use planner::Planner;
