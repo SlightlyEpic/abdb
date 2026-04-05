@@ -16,26 +16,23 @@ impl Planner {
     pub fn plan(stmt: BoundStatement) -> Result<LogicalPlan> {
         match stmt {
             BoundStatement::BeginTransaction => Ok(LogicalPlan::Nothing),
-            BoundStatement::Commit           => Ok(LogicalPlan::Nothing),
-            BoundStatement::Rollback         => Ok(LogicalPlan::Nothing),
+            BoundStatement::Commit => Ok(LogicalPlan::Nothing),
+            BoundStatement::Rollback => Ok(LogicalPlan::Nothing),
 
-            BoundStatement::Select(s)        => Self::plan_select(s),
-            BoundStatement::Insert(s)        => Self::plan_insert(s),
-            BoundStatement::Update(s)        => Self::plan_update(s),
-            BoundStatement::Delete(s)        => Self::plan_delete(s),
+            BoundStatement::Select(s) => Self::plan_select(s),
+            BoundStatement::Insert(s) => Self::plan_insert(s),
+            BoundStatement::Update(s) => Self::plan_update(s),
+            BoundStatement::Delete(s) => Self::plan_delete(s),
 
-            BoundStatement::CreateTable(s)   => Ok(LogicalPlan::CreateTable(s)),
-            BoundStatement::DropTable(s)     => Ok(LogicalPlan::DropTable(s)),
-            BoundStatement::AlterTable(s)    => Ok(LogicalPlan::AlterTable(s)),
-            BoundStatement::CreateIndex(s)   => Ok(LogicalPlan::CreateIndex(s)),
-            BoundStatement::DropIndex(s)     => Ok(LogicalPlan::DropIndex(s)),
+            BoundStatement::CreateTable(s) => Ok(LogicalPlan::CreateTable(s)),
+            BoundStatement::DropTable(s) => Ok(LogicalPlan::DropTable(s)),
+            BoundStatement::AlterTable(s) => Ok(LogicalPlan::AlterTable(s)),
+            BoundStatement::CreateIndex(s) => Ok(LogicalPlan::CreateIndex(s)),
+            BoundStatement::DropIndex(s) => Ok(LogicalPlan::DropIndex(s)),
 
-            BoundStatement::Explain(inner)   => {
-                Self::plan(*inner)
-            }
+            BoundStatement::Explain(inner) => Self::plan(*inner),
         }
     }
-
 
     fn plan_select(stmt: BoundSelect) -> Result<LogicalPlan> {
         let mut plan = Self::plan_from(stmt.from, stmt.joins)?;
@@ -68,16 +65,21 @@ impl Planner {
             });
         }
 
-        let (exprs, aliases): (Vec<_>, Vec<_>) = stmt.projections.into_iter()
+        let (exprs, aliases): (Vec<_>, Vec<_>) = stmt
+            .projections
+            .into_iter()
             .map(|p| (p.expr, p.alias))
             .unzip();
 
         let proj_schema = Schema::new(
-            stmt.output_columns.into_iter().map(|oc| OutputColumn {
-                name: oc.name,
-                data_type: oc.data_type,
-                nullable: oc.nullable,
-            }).collect()
+            stmt.output_columns
+                .into_iter()
+                .map(|oc| OutputColumn {
+                    name: oc.name,
+                    data_type: oc.data_type,
+                    nullable: oc.nullable,
+                })
+                .collect(),
         );
 
         plan = LogicalPlan::Projection(Projection {
@@ -88,16 +90,25 @@ impl Planner {
         });
 
         if stmt.distinct {
-            plan = LogicalPlan::Distinct(Distinct { input: Box::new(plan) });
+            plan = LogicalPlan::Distinct(Distinct {
+                input: Box::new(plan),
+            });
         }
 
         if !stmt.order_by.is_empty() {
-            let keys = stmt.order_by.into_iter().map(|o| SortKey {
-                expr: o.expr,
-                asc: o.asc,
-                nulls_first: o.nulls_first,
-            }).collect();
-            plan = LogicalPlan::Sort(Sort { order_by: keys, input: Box::new(plan) });
+            let keys = stmt
+                .order_by
+                .into_iter()
+                .map(|o| SortKey {
+                    expr: o.expr,
+                    asc: o.asc,
+                    nulls_first: o.nulls_first,
+                })
+                .collect();
+            plan = LogicalPlan::Sort(Sort {
+                order_by: keys,
+                input: Box::new(plan),
+            });
         }
 
         if stmt.limit.is_some() || stmt.offset.is_some() {
@@ -111,10 +122,7 @@ impl Planner {
         Ok(plan)
     }
 
-    fn plan_from(
-        from: Vec<BoundTableRef>,
-        joins: Vec<BoundJoin>,
-    ) -> Result<LogicalPlan> {
+    fn plan_from(from: Vec<BoundTableRef>, joins: Vec<BoundJoin>) -> Result<LogicalPlan> {
         if from.is_empty() {
             return Ok(LogicalPlan::Values(Values {
                 rows: vec![vec![]],
@@ -126,7 +134,7 @@ impl Planner {
 
         for join in joins {
             let right = Self::plan_table_ref(join.table)?;
-            let left_schema  = plan.schema();
+            let left_schema = plan.schema();
             let right_schema = right.schema();
             let schema = merge_schemas(&left_schema, &right_schema);
             plan = LogicalPlan::Join(Join {
@@ -143,21 +151,40 @@ impl Planner {
 
     fn plan_table_ref(table_ref: BoundTableRef) -> Result<LogicalPlan> {
         match table_ref {
-            BoundTableRef::BaseTable { table, columns, alias } => {
-                let schema = Schema::new(columns.iter().map(|c| OutputColumn {
-                    name: alias.as_deref().map(|a| format!("{}.{}", a, c.name))
-                        .unwrap_or_else(|| c.name.to_string()),
-                    data_type: c.type_id,
-                    nullable: c.nullable,
-                }).collect());
-                Ok(LogicalPlan::SeqScan(SeqScan { table, columns, alias, schema }))
+            BoundTableRef::BaseTable {
+                table,
+                columns,
+                alias,
+            } => {
+                let schema = Schema::new(
+                    columns
+                        .iter()
+                        .map(|c| OutputColumn {
+                            name: alias
+                                .as_deref()
+                                .map(|a| format!("{}.{}", a, c.name))
+                                .unwrap_or_else(|| c.name.to_string()),
+                            data_type: c.type_id,
+                            nullable: c.nullable,
+                        })
+                        .collect(),
+                );
+                Ok(LogicalPlan::SeqScan(SeqScan {
+                    table,
+                    columns,
+                    alias,
+                    schema,
+                }))
             }
             BoundTableRef::Subquery { query, alias } => {
                 let mut plan = Self::plan_select(*query)?;
                 if let LogicalPlan::Projection(ref mut p) = plan {
-                    for (col, alias_name) in p.schema.columns.iter_mut().zip(
-                        std::iter::repeat(alias.clone())
-                    ) {
+                    for (col, alias_name) in p
+                        .schema
+                        .columns
+                        .iter_mut()
+                        .zip(std::iter::repeat(alias.clone()))
+                    {
                         col.name = format!("{}.{}", alias_name, col.name);
                     }
                 }
@@ -166,15 +193,19 @@ impl Planner {
         }
     }
 
-
     fn plan_insert(stmt: BoundInsert) -> Result<LogicalPlan> {
         let source = match stmt.source {
             BoundInsertSource::Values(rows) => {
-                let schema = Schema::new(stmt.target_columns.iter().map(|c| OutputColumn {
-                    name: c.name.to_string(),
-                    data_type: c.type_id,
-                    nullable: c.nullable,
-                }).collect());
+                let schema = Schema::new(
+                    stmt.target_columns
+                        .iter()
+                        .map(|c| OutputColumn {
+                            name: c.name.to_string(),
+                            data_type: c.type_id,
+                            nullable: c.nullable,
+                        })
+                        .collect(),
+                );
                 LogicalPlan::Values(Values { rows, schema })
             }
             BoundInsertSource::Select(sel) => Self::plan_select(*sel)?,
@@ -196,11 +227,16 @@ impl Planner {
     }
 
     fn plan_update(stmt: BoundUpdate) -> Result<LogicalPlan> {
-        let scan_schema = Schema::new(stmt.table_columns.iter().map(|c| OutputColumn {
-            name: c.name.to_string(),
-            data_type: c.type_id,
-            nullable: c.nullable,
-        }).collect());
+        let scan_schema = Schema::new(
+            stmt.table_columns
+                .iter()
+                .map(|c| OutputColumn {
+                    name: c.name.to_string(),
+                    data_type: c.type_id,
+                    nullable: c.nullable,
+                })
+                .collect(),
+        );
 
         let mut input = LogicalPlan::SeqScan(SeqScan {
             table: stmt.table.clone(),
@@ -232,11 +268,16 @@ impl Planner {
     }
 
     fn plan_delete(stmt: BoundDelete) -> Result<LogicalPlan> {
-        let scan_schema = Schema::new(stmt.table_columns.iter().map(|c| OutputColumn {
-            name: c.name.to_string(),
-            data_type: c.type_id,
-            nullable: c.nullable,
-        }).collect());
+        let scan_schema = Schema::new(
+            stmt.table_columns
+                .iter()
+                .map(|c| OutputColumn {
+                    name: c.name.to_string(),
+                    data_type: c.type_id,
+                    nullable: c.nullable,
+                })
+                .collect(),
+        );
 
         let mut input = LogicalPlan::SeqScan(SeqScan {
             table: stmt.table.clone(),
@@ -307,13 +348,21 @@ fn collect_agg_from_expr(expr: &BoundExpr, alias: &str, out: &mut Vec<AggregateE
             collect_agg_from_expr(right, alias, out);
         }
         BoundExprKind::UnaryOp { expr, .. } => collect_agg_from_expr(expr, alias, out),
-        BoundExprKind::Case { operand, when_then, else_result } => {
-            if let Some(op) = operand { collect_agg_from_expr(op, alias, out); }
+        BoundExprKind::Case {
+            operand,
+            when_then,
+            else_result,
+        } => {
+            if let Some(op) = operand {
+                collect_agg_from_expr(op, alias, out);
+            }
             for (w, t) in when_then {
                 collect_agg_from_expr(w, alias, out);
                 collect_agg_from_expr(t, alias, out);
             }
-            if let Some(e) = else_result { collect_agg_from_expr(e, alias, out); }
+            if let Some(e) = else_result {
+                collect_agg_from_expr(e, alias, out);
+            }
         }
         _ => {}
     }
@@ -329,14 +378,20 @@ fn build_aggregate_schema(
     for (i, expr) in group_by.iter().enumerate() {
         let (name, dt, nullable) = match &expr.kind {
             BoundExprKind::ColumnRef(cr) => {
-                let name = input_schema.columns.get(cr.scope_index)
+                let name = input_schema
+                    .columns
+                    .get(cr.scope_index)
                     .map(|c| c.name.clone())
                     .unwrap_or_else(|| cr.column_name.clone());
                 (name, expr.data_type, expr.nullable)
             }
             _ => (format!("group_{i}"), expr.data_type, expr.nullable),
         };
-        cols.push(OutputColumn { name, data_type: dt, nullable });
+        cols.push(OutputColumn {
+            name,
+            data_type: dt,
+            nullable,
+        });
     }
 
     for agg in aggregates {

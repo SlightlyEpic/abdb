@@ -1066,7 +1066,6 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
         }
     }
 
-
     fn coerce_expr(
         &self,
         expr: BoundExpr,

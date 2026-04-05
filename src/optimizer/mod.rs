@@ -1,5 +1,5 @@
-mod physical;
 mod optimizer;
+mod physical;
 
-pub use physical::*;
 pub use optimizer::Optimizer;
+pub use physical::*;

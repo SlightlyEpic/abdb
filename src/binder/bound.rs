@@ -63,10 +63,22 @@ pub struct BoundAlterTable {
 #[derive(Debug, Clone)]
 pub enum BoundAlterAction {
     AddColumn(BoundColumnDef),
-    DropColumn { column_oid: aliases::OId, position: u16 },
-    RenameColumn { column_oid: aliases::OId, old_name: String, new_name: String },
-    RenameTable { new_name: String },
-    AlterColumnType { column_oid: aliases::OId, new_type: DataType },
+    DropColumn {
+        column_oid: aliases::OId,
+        position: u16,
+    },
+    RenameColumn {
+        column_oid: aliases::OId,
+        old_name: String,
+        new_name: String,
+    },
+    RenameTable {
+        new_name: String,
+    },
+    AlterColumnType {
+        column_oid: aliases::OId,
+        new_type: DataType,
+    },
     AddForeignKey(ForeignKeyClause),
     DropForeignKey(String),
     AddPrimaryKey(Vec<aliases::OId>),
@@ -301,25 +313,28 @@ pub enum FunctionKind {
 
 impl FunctionKind {
     pub fn is_aggregate(&self) -> bool {
-        matches!(self, Self::Count | Self::Sum | Self::Avg | Self::Min | Self::Max)
+        matches!(
+            self,
+            Self::Count | Self::Sum | Self::Avg | Self::Min | Self::Max
+        )
     }
 }
 
 impl From<&str> for FunctionKind {
     fn from(s: &str) -> Self {
         match s {
-            "count"   => Self::Count,
-            "sum"     => Self::Sum,
-            "avg"     => Self::Avg,
-            "min"     => Self::Min,
-            "max"     => Self::Max,
-            "coalesce"=> Self::Coalesce,
-            "nullif"  => Self::Nullif,
-            "upper"   => Self::Upper,
-            "lower"   => Self::Lower,
+            "count" => Self::Count,
+            "sum" => Self::Sum,
+            "avg" => Self::Avg,
+            "min" => Self::Min,
+            "max" => Self::Max,
+            "coalesce" => Self::Coalesce,
+            "nullif" => Self::Nullif,
+            "upper" => Self::Upper,
+            "lower" => Self::Lower,
             "length" | "len" => Self::Length,
-            "abs"     => Self::Abs,
-            _         => Self::Unknown,
+            "abs" => Self::Abs,
+            _ => Self::Unknown,
         }
     }
 }

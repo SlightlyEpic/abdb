@@ -44,7 +44,6 @@ pub enum TxnState {
     Aborted,
 }
 
-
 #[derive(Debug)]
 pub struct Transaction {
     pub txn_id: TxnId,

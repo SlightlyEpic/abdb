@@ -742,7 +742,12 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
             }
 
             // 7. Return write guard
-            Ok(PageWriteGuard::new(frame_idx, frame_slice, self, write_latch))
+            Ok(PageWriteGuard::new(
+                frame_idx,
+                frame_slice,
+                self,
+                write_latch,
+            ))
         }
     }
 

@@ -65,7 +65,6 @@ impl PhysicalPlan {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct PhysSeqScan {
     pub table: catalog::Table,
@@ -86,13 +85,11 @@ pub struct PhysIndexScan {
     pub schema: Schema,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct PhysFilter {
     pub predicate: BoundExpr,
     pub input: Box<PhysicalPlan>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysProjection {
@@ -101,7 +98,6 @@ pub struct PhysProjection {
     pub input: Box<PhysicalPlan>,
     pub schema: Schema,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysNestedLoopJoin {
@@ -122,7 +118,6 @@ pub struct PhysHashJoin {
     pub residual: Option<BoundExpr>,
     pub schema: Schema,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysHashAggregate {
@@ -149,7 +144,6 @@ pub struct PhysAggregateExpr {
     pub data_type: DataType,
     pub nullable: bool,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysSort {
@@ -179,7 +173,6 @@ pub struct PhysLimit {
     pub input: Box<PhysicalPlan>,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct PhysDistinct {
     pub input: Box<PhysicalPlan>,
@@ -189,7 +182,6 @@ pub struct PhysDistinct {
 pub struct PhysHashDistinct {
     pub input: Box<PhysicalPlan>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysInsert {
@@ -216,7 +208,6 @@ pub struct PhysDelete {
     pub input: Box<PhysicalPlan>,
     pub schema: Schema,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct PhysValues {

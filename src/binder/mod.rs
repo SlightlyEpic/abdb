@@ -1,11 +1,11 @@
-mod error;
-mod scope;
-mod oid_alloc;
-mod bound;
 mod binder;
+mod bound;
+mod error;
+mod oid_alloc;
+mod scope;
 
-pub use error::{BindError, BindResult};
-pub use scope::{Scope, ScopeColumn};
-pub use oid_alloc::OidAllocator;
-pub use bound::*;
 pub use binder::Binder;
+pub use bound::*;
+pub use error::{BindError, BindResult};
+pub use oid_alloc::OidAllocator;
+pub use scope::{Scope, ScopeColumn};

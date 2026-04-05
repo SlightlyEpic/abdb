@@ -1,8 +1,8 @@
 use crate::{
     binder::{
-        BoundAssignment, BoundColumnDef, BoundCreateIndex, BoundCreateTable, BoundDropIndex,
-        BoundDropTable, BoundAlterTable, BoundExpr, BoundJoinKind, BoundJoinCondition,
-        FunctionKind, OutputColumn,
+        BoundAlterTable, BoundAssignment, BoundColumnDef, BoundCreateIndex, BoundCreateTable,
+        BoundDropIndex, BoundDropTable, BoundExpr, BoundJoinCondition, BoundJoinKind, FunctionKind,
+        OutputColumn,
     },
     catalog,
     common::aliases,
@@ -73,25 +73,25 @@ pub enum LogicalPlan {
 impl LogicalPlan {
     pub fn schema(&self) -> Schema {
         match self {
-            LogicalPlan::SeqScan(n)    => n.schema.clone(),
-            LogicalPlan::IndexScan(n)  => n.schema.clone(),
-            LogicalPlan::Filter(n)     => n.input.schema(),
+            LogicalPlan::SeqScan(n) => n.schema.clone(),
+            LogicalPlan::IndexScan(n) => n.schema.clone(),
+            LogicalPlan::Filter(n) => n.input.schema(),
             LogicalPlan::Projection(n) => n.schema.clone(),
-            LogicalPlan::Join(n)       => n.schema.clone(),
-            LogicalPlan::Aggregate(n)  => n.schema.clone(),
-            LogicalPlan::Sort(n)       => n.input.schema(),
-            LogicalPlan::Limit(n)      => n.input.schema(),
-            LogicalPlan::Distinct(n)   => n.input.schema(),
-            LogicalPlan::Insert(n)     => n.schema.clone(),
-            LogicalPlan::Update(n)     => n.schema.clone(),
-            LogicalPlan::Delete(n)     => n.schema.clone(),
-            LogicalPlan::Values(n)     => n.schema.clone(),
+            LogicalPlan::Join(n) => n.schema.clone(),
+            LogicalPlan::Aggregate(n) => n.schema.clone(),
+            LogicalPlan::Sort(n) => n.input.schema(),
+            LogicalPlan::Limit(n) => n.input.schema(),
+            LogicalPlan::Distinct(n) => n.input.schema(),
+            LogicalPlan::Insert(n) => n.schema.clone(),
+            LogicalPlan::Update(n) => n.schema.clone(),
+            LogicalPlan::Delete(n) => n.schema.clone(),
+            LogicalPlan::Values(n) => n.schema.clone(),
             LogicalPlan::CreateTable(_)
             | LogicalPlan::DropTable(_)
             | LogicalPlan::AlterTable(_)
             | LogicalPlan::CreateIndex(_)
             | LogicalPlan::DropIndex(_)
-            | LogicalPlan::Nothing     => Schema::empty(),
+            | LogicalPlan::Nothing => Schema::empty(),
         }
     }
 }

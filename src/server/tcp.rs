@@ -45,7 +45,7 @@ impl TcpServer {
         Self {
             config,
             accessor: Arc::new(accessor),
-            txn_manager: Arc::new(TransactionManager::new())
+            txn_manager: Arc::new(TransactionManager::new()),
         }
     }
 
@@ -64,7 +64,8 @@ impl TcpServer {
                 .await
                 .expect("Error while accepting connection");
             println!("New client connected: {}", addr);
-            let mut session = Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager));
+            let mut session =
+                Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager));
 
             tokio::spawn(async move {
                 // 1. Split the socket so we can read and write independently
