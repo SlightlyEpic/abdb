@@ -7,6 +7,7 @@ use tokio::net::TcpListener;
 use crate::binder::Binder;
 use crate::optimizer::Optimizer;
 use crate::planner::Planner;
+use crate::transaction::TransactionManager;
 // use crate::parser::Parser;
 use crate::{
     accessor::AccessorImpl,
@@ -18,10 +19,13 @@ use crate::{
 pub struct TcpServer {
     config: AbdbConfig,
     accessor: Arc<AccessorImpl<BufferPool<DiskManagerImpl<BTreePageDirectory, SimpleAllocator>>>>,
+    txn_mgr: Arc<TransactionManager>,
 }
 
 impl TcpServer {
     pub async fn new(config: AbdbConfig) -> Self {
+        std::fs::create_dir_all(&config.data_dir).expect("Could not create data dir");
+
         let page_directory = Arc::new(
             BTreePageDirectory::open(config.data_dir.join("page.dir"))
                 .await
@@ -45,14 +49,18 @@ impl TcpServer {
         Self {
             config,
             accessor: Arc::new(accessor),
+            txn_mgr: Arc::new(TransactionManager::new())
         }
     }
 
     pub async fn listen(self: Arc<Self>) {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", self.config.port))
+        let host = "127.0.0.1";
+        let port = self.config.port;
+
+        let listener = TcpListener::bind(format!("{}:{}", host, port))
             .await
             .expect("Error while creating TcpListener");
-        println!("Database server listening on 127.0.0.1:8080");
+        println!("Database server listening on {}:{}", host, port);
 
         loop {
             let (mut socket, addr) = listener

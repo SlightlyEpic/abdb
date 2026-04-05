@@ -11,4 +11,5 @@ pub mod parser;
 pub mod planner;
 pub mod server;
 pub mod storage;
+pub mod transaction;
 pub mod wal;
