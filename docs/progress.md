@@ -68,8 +68,8 @@ Disk (files: .heap, .idx, .dir)
 - [x] `HeapPage` — slotted page format (insert, delete, get, get_mut)
 - [x] Slot directory management (grow from header end)
 - [x] Free space tracking within pages
-- [ ] Heap page compaction (defragment deleted slots in-place)
-- [ ] Heap page unit tests
+- [ ] [not picking] Heap page compaction (defragment deleted slots in-place)
+- [ ] [not picking] Heap page unit tests
 
 ### Index B-Tree Pages
 
@@ -79,14 +79,14 @@ Disk (files: .heap, .idx, .dir)
 - [x] Leaf page: `insert_entry`, `delete_entry`, `find_entry`, sibling ptrs
 - [x] Leaf page: merge support (`is_underfull`, steal/merge helpers)
 - [x] Compile-time size assertions for page layout correctness
-- [ ] Index page unit tests (inner and leaf)
-- [ ] Variable-width index keys (currently fixed u64 keys only)
+- [ ] [not picking] Index page unit tests (inner and leaf)
+- [ ] [not picking] Variable-width index keys (currently fixed u64 keys only)
 
 ### Directory B-Tree Pages
 
 - [x] `DirectoryInnerPage` — routing pages for page directory
 - [x] `DirectoryLeafPage` — leaf pages for page directory
-- [ ] Directory page unit tests
+- [ ] [not picking] Directory page unit tests
 
 ---
 
@@ -95,26 +95,26 @@ Disk (files: .heap, .idx, .dir)
 ### DiskManager
 
 - [x] `DiskManager` trait definition (`read_page`, `write_page`, `read_page_at_loc`, `write_page_at_loc`, `new_page`)
-- [ ] Concrete `DiskManager` implementation (file I/O with `tokio::fs`)
-- [ ] File naming convention (FileId -> filesystem path)
-- [ ] File creation and initialization (new heap/index/directory files)
-- [ ] Error handling for I/O failures
+- [x] Concrete `DiskManager` implementation (file I/O with `tokio::fs`)
+- [x] File naming convention (FileId -> filesystem path)
+- [x] File creation and initialization (new heap/index/directory files)
+- [x] Error handling for I/O failures
 
 ### PageAllocator
 
 - [x] `PageAllocator` trait definition (`allocate`, `deallocate`)
-- [ ] Concrete `PageAllocator` implementation
-- [ ] Free page tracking (free list or bitmap)
-- [ ] File expansion (grow file when no free pages)
-- [ ] File truncation (shrink file when trailing pages are free)
+- [x] Concrete `PageAllocator` implementation
+- [ ] [not picking for now] Free page tracking (free list or bitmap)
+- [x] File expansion (grow file when no free pages)
+- [ ] [not picking for now] File truncation (shrink file when trailing pages are free)
 
 ### PageDirectory
 
 - [x] `PageDirectory` trait definition (`lookup`, `add_page`, `update_page`, `delete_page`, `flush_all_dirty`)
-- [ ] Concrete `PageDirectory` implementation (B-Tree in .dir file)
-- [ ] Directory B-Tree bootstrap (initial root creation)
-- [ ] Logical-to-physical page mapping insert/lookup/delete
-- [ ] PageDirectory error variants (currently empty enum)
+- [x] Concrete `PageDirectory` implementation (B-Tree in .dir file)
+- [?] Directory B-Tree bootstrap (initial root creation)
+- [x] Logical-to-physical page mapping insert/lookup/delete
+- [x] PageDirectory error variants (currently empty enum)
 
 ### AlignedBuffer
 
@@ -139,24 +139,24 @@ Disk (files: .heap, .idx, .dir)
 - [x] `fetch_page_write` — load page + exclusive latch
 - [x] `fetch_page_read` — load page + shared latch
 - [x] `fetch_page_at_loc_write` — load by physical location + exclusive latch
-- [ ] `fetch_page_at_loc_read` — load by physical location + shared latch (stubbed `todo!()`)
-- [ ] `new_page` — allocate new page through buffer pool (stubbed `todo!()`)
+- [x] `fetch_page_at_loc_read` — load by physical location + shared latch (stubbed `todo!()`)
+- [x] `new_page` — allocate new page through buffer pool (stubbed `todo!()`)
 - [x] `load_page_as_unevictable` — pin page permanently (for catalog)
-- [ ] `load_page_loc_as_unevictable` — pin by physical location (stubbed `todo!()`)
+- [x] `load_page_loc_as_unevictable` — pin by physical location (stubbed `todo!()`)
 
 ### Dirty Page Management
 
-- [ ] `mark_dirty` on `PageWriteGuard` (stubbed `todo!()`)
-- [ ] `flush_all_dirty` — write all dirty pages to disk (stubbed `todo!()`)
-- [ ] Dirty bit propagation on write guard drop
+- [x] `mark_dirty` on `PageWriteGuard` (stubbed `todo!()`)
+- [x] `flush_all_dirty` — write all dirty pages to disk (stubbed `todo!()`)
+- [x] Dirty bit propagation on write guard drop
 
 ### Eviction
 
 - [x] `EvictionPolicy` trait definition (`find_victim`, `record_access`, `set_evictable`)
 - [x] Eviction loop in buffer pool (victim selection, dirty writeback, metadata cleanup)
 - [x] Eviction policy integration (record_access on guard creation)
-- [ ] Concrete eviction policy (LRU-K, Clock, or LRU implementation)
-- [ ] Evictor error variants (currently empty enum)
+- [x] Concrete eviction policy (LRU-K, Clock, or LRU implementation)
+- [x] Evictor error variants (currently empty enum)
 
 ### RAII Guards
 
@@ -164,7 +164,7 @@ Disk (files: .heap, .idx, .dir)
 - [x] `PageReadGuard` — shared latch + deref to `PageBuffer`
 - [x] `PageWriteGuard` — exclusive latch + deref_mut to `PageBuffer`
 - [x] `downgrade` — convert write guard to read guard (latch downgrade)
-- [ ] `commit_wal` — WAL flush on guard (can be removed since no WAL)
+- [ ] [not picking for now] `commit_wal` — WAL flush on guard (can be removed since no WAL)
 
 ---
 
@@ -191,8 +191,8 @@ Disk (files: .heap, .idx, .dir)
 - [x] `split_inner` — inner page split with separator push-up
 - [x] `insert_into_ancestors` — cascading split propagation
 - [x] Leaf merge on delete (`try_merge_leaf`, `find_merge_candidate`)
-- [ ] Inner page merge cascading (currently only leaf merges are performed)
-- [ ] B-Tree bulk loading
+- [?] Inner page merge cascading (currently only leaf merges are performed)
+- [ ] [what is this] B-Tree bulk loading
 
 ### MVCC Visibility
 
@@ -223,7 +223,7 @@ Disk (files: .heap, .idx, .dir)
 - [x] DDL ops — `drop_table` (deregister from catalog, check for active indexes)
 - [x] DDL ops — `create_index` (init index file header, register in catalog cache)
 - [x] DDL ops — `drop_index` (deregister from catalog cache)
-- [ ] DDL: system table persistence (insert into sys_tables/sys_columns/sys_indexes — deferred to DB bootstrap)
+- [ ] [IMPORTANT] DDL: system table persistence (insert into sys_tables/sys_columns/sys_indexes — deferred to DB bootstrap)
 - [ ] DDL: physical page deallocation on drop (requires storage layer file-level API)
 
 ---
@@ -270,24 +270,25 @@ Disk (files: .heap, .idx, .dir)
 
 ### Binding Methods (all stubbed `todo!()`)
 
-- [ ] `bind_statement` — dispatch to specific binders
-- [ ] `bind_create_table` — validate table definition
-- [ ] `bind_insert` — resolve table, validate columns and values
-- [ ] `bind_update` — resolve table, validate assignments
-- [ ] `bind_delete` — resolve table, validate WHERE clause
-- [ ] `bind_query` — bind top-level query (with ORDER BY, LIMIT)
-- [ ] `bind_select` — bind SELECT with FROM, WHERE, GROUP BY
-- [ ] `bind_table_with_joins` — resolve table references with joins
-- [ ] `bind_table_ref` — resolve single table reference
-- [ ] `bind_join_constraint` — resolve ON/USING clause
-- [ ] `bind_select_list` — resolve projection columns
-- [ ] `bind_expr` — recursive expression binding
-- [ ] `bind_value` — literal value binding
-- [ ] `bind_data_type` — SQL type to DataType mapping
-- [ ] `bind_binary_op` — SQL binary op to BinaryOperator
-- [ ] `bind_unary_op` — SQL unary op to UnaryOperator
-- [ ] `push_table_scope` / `pop_table_scope` — scope management
-- [ ] `resolve_column` — column name resolution in scope
+- [x] `bind_statement` — dispatch to specific binders
+- [x] `bind_create_table` — validate table definition
+- [x] `bind_insert` — resolve table, validate columns and values
+- [x] `bind_update` — resolve table, validate assignments
+- [x] `bind_delete` — resolve table, validate WHERE clause
+- [x] `bind_query` — bind top-level query (with ORDER BY, LIMIT)
+- [x] `bind_select` — bind SELECT with FROM, WHERE, GROUP BY
+- [x] `bind_table_with_joins` — resolve table references with joins
+- [x] `bind_table_ref` — resolve single table reference
+- [x] `bind_join_constraint` — resolve ON/USING clause
+- [x] `bind_select_list` — resolve projection columns
+- [x] `bind_expr` — recursive expression binding
+- [x] `bind_value` — literal value binding
+- [x] `bind_data_type` — SQL type to DataType mapping
+- [x] `bind_binary_op` — SQL binary op to BinaryOperator
+- [x] `bind_unary_op` — SQL unary op to UnaryOperator
+- [x] `push_table_scope` / `pop_table_scope` — scope management
+- [x] `resolve_column` — column name resolution in scope
+- [ ] transaction handling?
 
 ---
 
@@ -308,15 +309,16 @@ Disk (files: .heap, .idx, .dir)
 
 ### Planning Methods (all stubbed `todo!()`)
 
-- [ ] `plan` — dispatch bound statement to plan builder
-- [ ] `plan_create_table` — produce CreateTableNode
-- [ ] `plan_insert` — produce InsertNode with child ValuesNode
-- [ ] `plan_update` — produce UpdateNode with child scan
-- [ ] `plan_delete` — produce DeleteNode with child scan
-- [ ] `plan_select` — produce scan + filter + projection tree
-- [ ] `plan_table_ref` — produce scan or join subtree
-- [ ] `plan_base_table` — produce SeqScanNode
-- [ ] `plan_join` — produce join node from bound join
+- [x] `plan` — dispatch bound statement to plan builder
+- [x] `plan_create_table` — produce CreateTableNode
+- [x] `plan_insert` — produce InsertNode with child ValuesNode
+- [x] `plan_update` — produce UpdateNode with child scan
+- [x] `plan_delete` — produce DeleteNode with child scan
+- [x] `plan_select` — produce scan + filter + projection tree
+- [x] `plan_table_ref` — produce scan or join subtree
+- [x] `plan_base_table` — produce SeqScanNode
+- [x] `plan_join` — produce join node from bound join
+- [ ] finishing up
 
 ---
 
@@ -329,12 +331,12 @@ Disk (files: .heap, .idx, .dir)
 
 ### Optimization Passes (all stubbed `todo!()`)
 
-- [ ] `push_down_filters` — push predicates closer to scans
-- [ ] `push_down_projections` — eliminate unnecessary columns early
-- [ ] `reorder_joins` — reorder join order for cost reduction
-- [ ] `choose_join_algorithm` — select NLJ/Hash/Merge per join
-- [ ] `choose_access_method` — pick SeqScan vs IndexScan
-- [ ] `merge_operators` — fuse adjacent filter/projection nodes
+- [x] `push_down_filters` — push predicates closer to scans
+- [x] `push_down_projections` — eliminate unnecessary columns early
+- [ ] [not picking] `reorder_joins` — reorder join order for cost reduction
+- [ ] [not picking] `choose_join_algorithm` — select NLJ/Hash/Merge per join
+- [ ] [not picking] `choose_access_method` — pick SeqScan vs IndexScan
+- [ ] [not picking] `merge_operators` — fuse adjacent filter/projection nodes
 
 ---
 
@@ -393,10 +395,10 @@ Disk (files: .heap, .idx, .dir)
 ## 12. SQL Frontend (End-to-End Pipeline)
 
 - [x] `sqlparser` dependency for parsing
-- [ ] Parse SQL string -> AST (wire up sqlparser)
-- [ ] AST -> BoundStatement (binder)
-- [ ] BoundStatement -> PlanNode (planner)
-- [ ] PlanNode -> optimized PlanNode (optimizer)
+- [x] Parse SQL string -> AST (wire up sqlparser)
+- [x] AST -> BoundStatement (binder)
+- [x] BoundStatement -> PlanNode (planner)
+- [x] PlanNode -> optimized PlanNode (optimizer)
 - [ ] PlanNode -> query result (executor)
 - [ ] Result formatting (rows -> display)
 - [ ] Error reporting (user-facing error messages)
@@ -425,8 +427,8 @@ Disk (files: .heap, .idx, .dir)
 ## 14. `main.rs` & CLI
 
 - [x] Placeholder main (`println!("Hello, world!")`)
-- [ ] Database instance initialization
-- [ ] REPL / interactive SQL shell
+- [x] Database instance initialization
+- [x] REPL / interactive SQL shell
 - [ ] Command-line argument parsing (db path, buffer pool size, etc.)
 
 ---
