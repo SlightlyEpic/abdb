@@ -1,11 +1,10 @@
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
+use std::io;
+use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::{io, sync::Arc};
-
-use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::{
     common::aliases::{self, FileId, LPageId, PPageId},
@@ -112,8 +111,8 @@ pub struct DiskManagerImpl<D: directory::PageDirectory, A: allocator::PageAlloca
     allocator: Arc<A>,
     /// Next logical page ID to allocate
     next_lpage_id: AtomicU32,
-    /// Cache of open file handles
-    file_handles: RwLock<HashMap<FileId, Arc<RwLock<File>>>>,
+    /// Cache of open file handles (using std RwLock for sync access with positioned I/O)
+    file_handles: RwLock<HashMap<FileId, Arc<File>>>,
     /// Mapping of FileId -> FileType for path construction
     file_types: RwLock<HashMap<FileId, FileType>>,
 }
@@ -143,8 +142,8 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
     }
 
     /// Register a file with its type.
-    pub async fn register_file(&self, file_id: FileId, file_type: FileType) {
-        let mut types = self.file_types.write().await;
+    pub fn register_file(&self, file_id: FileId, file_type: FileType) {
+        let mut types = self.file_types.write().unwrap();
         types.insert(file_id, file_type);
     }
 
@@ -165,10 +164,10 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
     }
 
     /// Get or open a file handle.
-    async fn get_file(&self, file_id: FileId) -> Result<Arc<RwLock<File>>> {
+    fn get_file(&self, file_id: FileId) -> Result<Arc<File>> {
         // Check cache first
         {
-            let handles = self.file_handles.read().await;
+            let handles = self.file_handles.read().unwrap();
             if let Some(handle) = handles.get(&file_id) {
                 return Ok(handle.clone());
             }
@@ -176,7 +175,7 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
 
         // Get file type
         let file_type = {
-            let types = self.file_types.read().await;
+            let types = self.file_types.read().unwrap();
             types.get(&file_id).copied().unwrap_or(FileType::Heap)
         };
 
@@ -186,14 +185,13 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
             .read(true)
             .write(true)
             .create(true)
-            .open(&path)
-            .await?;
+            .open(&path)?;
 
-        let handle = Arc::new(RwLock::new(file));
+        let handle = Arc::new(file);
 
         // Cache it
         {
-            let mut handles = self.file_handles.write().await;
+            let mut handles = self.file_handles.write().unwrap();
             handles.insert(file_id, handle.clone());
         }
 
@@ -252,11 +250,9 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         target: &'a mut aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + 'a + Send {
         async move {
-            let handle = self.get_file(loc.file).await?;
-            let mut file = handle.write().await;
+            let file = self.get_file(loc.file)?;
 
-            file.seek(std::io::SeekFrom::Start(loc.offset)).await?;
-            file.read_exact(target).await?;
+            tokio::task::block_in_place(|| file.read_exact_at(target, loc.offset))?;
 
             Ok(())
         }
@@ -268,12 +264,9 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         target: &'a aliases::PageBuffer,
     ) -> impl Future<Output = Result<()>> + 'a + Send {
         async move {
-            let handle = self.get_file(loc.file).await?;
-            let mut file = handle.write().await;
+            let file = self.get_file(loc.file)?;
 
-            file.seek(std::io::SeekFrom::Start(loc.offset)).await?;
-            file.write_all(target).await?;
-            // Note: sync is not called here for performance; use flush_all_dirty for durability
+            tokio::task::block_in_place(|| file.write_all_at(target, loc.offset))?;
 
             Ok(())
         }
