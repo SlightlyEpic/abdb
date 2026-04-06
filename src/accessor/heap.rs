@@ -1,10 +1,9 @@
 use futures::stream::Stream;
 
 use crate::{
-    buffer::BufferPool,
+    buffer::{BufferPool, PageWriteGuard},
     common::{
-        aliases::{self, FileId, PPageId, RecordId},
-        constants::PAGE_BUF_SIZE,
+        aliases::{self, FileId, LPageId, PPageId, RecordId},
         txn::Txn,
     },
     page::overlays::{file_header::HeapFileHeaderPage, table::HeapPage},
@@ -21,11 +20,11 @@ use super::{
 
 /// State machine for the heap scan stream.
 /// Buffers one page's worth of visible tuples at a time.
+/// Traverses the heap as a linked list of pages.
 struct HeapScanState<'a, B: BufferPool> {
     bp: &'a B,
-    file_id: FileId,
-    num_pages: u32,
-    current_page: u32,
+    /// Current page in the linked list (0 = end of list)
+    current_page: LPageId,
     buffered: Vec<(Vec<u8>, RecordId)>,
     buf_idx: usize,
     txn: Txn,
@@ -36,12 +35,14 @@ struct HeapScanState<'a, B: BufferPool> {
 /// Returns a lazy async stream that fetches one page at a time from the
 /// buffer pool, extracts visible tuples, and yields them with their RecordIds.
 /// Each item is wrapped in `Result` to propagate I/O and page corruption errors.
+///
+/// Pages are traversed as a linked list via next_page pointers.
 pub(super) async fn scan<'a, B: BufferPool>(
     bp: &'a B,
     file_id: FileId,
     txn: Txn,
 ) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
-    // Read file header to get page count
+    // Read file header to get first page
     let header_loc = PPageId {
         file: file_id,
         offset: 0,
@@ -51,17 +52,15 @@ pub(super) async fn scan<'a, B: BufferPool>(
         .await
         .map_err(Error::BufferError)?;
     let header_page = HeapFileHeaderPage::new(&*guard);
-    let num_pages = header_page
+    let first_page = header_page
         .data()
         .map_err(|_| Error::PageCorruption("heap file header unreadable".into()))?
-        .num_pages;
+        .first_page;
     drop(guard);
 
     let state = HeapScanState {
         bp,
-        file_id,
-        num_pages,
-        current_page: 0, // incremented to 1 on first iteration
+        current_page: first_page,
         buffered: Vec::new(),
         buf_idx: 0,
         txn,
@@ -76,18 +75,16 @@ pub(super) async fn scan<'a, B: BufferPool>(
                 return Some((Ok(item), state));
             }
 
-            // Advance to next page
-            state.current_page += 1;
-            if state.current_page > state.num_pages {
+            // Check if we've reached the end of the list
+            if state.current_page == 0 {
                 return None;
             }
 
             let bp = state.bp;
-            let loc = PPageId {
-                file: state.file_id,
-                offset: state.current_page as u64 * PAGE_BUF_SIZE as u64,
-            };
-            let guard = match bp.fetch_page_at_loc_read(loc).await {
+            let current_lpage_id = state.current_page;
+
+            // Fetch the current page by LPageId
+            let guard = match bp.fetch_page_read(current_lpage_id).await {
                 Ok(g) => g,
                 Err(e) => return Some((Err(Error::BufferError(e)), state)),
             };
@@ -96,18 +93,21 @@ pub(super) async fn scan<'a, B: BufferPool>(
             state.buffered.clear();
             state.buf_idx = 0;
 
-            let num_slots = match page.header() {
-                Ok(h) => h.num_slots,
+            let header = match page.header() {
+                Ok(h) => h,
                 Err(_) => {
                     return Some((
                         Err(Error::PageCorruption(format!(
                             "heap page {} header unreadable",
-                            state.current_page
+                            current_lpage_id
                         ))),
                         state,
                     ));
                 }
             };
+
+            let num_slots = header.num_slots;
+            let next_page = header.next_page;
 
             for slot in 0..num_slots {
                 let data = match page.get_data(slot as usize) {
@@ -125,12 +125,15 @@ pub(super) async fn scan<'a, B: BufferPool>(
                     // Strip the XMIN/XMAX header, return user data only
                     let user_data = data[visibility::TUPLE_HEADER_SIZE..].to_vec();
                     let rid = RecordId {
-                        page_id: state.current_page,
+                        page_id: current_lpage_id,
                         slot_id: slot,
                     };
                     state.buffered.push((user_data, rid));
                 }
             }
+
+            // Advance to next page in the list
+            state.current_page = next_page;
             // Loop back to yield from buffer
         }
     }))
@@ -142,14 +145,12 @@ pub(super) async fn scan<'a, B: BufferPool>(
 
 /// Insert a tuple into a heap file.
 ///
-/// Prepends the MVCC header (XMIN = txn.id, XMAX = 0), then scans existing
-/// pages for free space. If none found, extends the file with a new page.
+/// Prepends the MVCC header (XMIN = txn.id, XMAX = 0), then traverses the
+/// linked list of pages looking for free space. If none found, allocates a
+/// new page and prepends it to the list.
 ///
-/// When allocating a new page, the file header is updated first (under a write
-/// latch) before the data page is written. This ensures a crash between the two
-/// operations leaves the header pointing at the new page (which will be empty
-/// on recovery) rather than the reverse (data written, header stale, page
-/// number reused on next insert).
+/// New pages are prepended to the head of the list for efficiency (only need
+/// to update header.first_page and new_page.next_page).
 pub(super) async fn insert<'a, B: BufferPool>(
     bp: &'a B,
     file_id: FileId,
@@ -162,7 +163,7 @@ pub(super) async fn insert<'a, B: BufferPool>(
     full_tuple.extend_from_slice(&header);
     full_tuple.extend_from_slice(tuple);
 
-    // Read file header for page count
+    // Read file header to get first page
     let header_loc = PPageId {
         file: file_id,
         offset: 0,
@@ -172,86 +173,80 @@ pub(super) async fn insert<'a, B: BufferPool>(
         .await
         .map_err(Error::BufferError)?;
     let header_page = HeapFileHeaderPage::new(&*guard);
-    let num_pages = header_page
+    let first_page = header_page
         .data()
         .map_err(|_| Error::PageCorruption("heap file header unreadable".into()))?
-        .num_pages;
+        .first_page;
     drop(guard);
 
-    // Try inserting into existing pages (linear scan for free space)
-    for page_num in 1..=num_pages {
-        let loc = PPageId {
-            file: file_id,
-            offset: page_num as u64 * PAGE_BUF_SIZE as u64,
-        };
-
+    // Traverse the linked list looking for free space
+    let mut current_page = first_page;
+    while current_page != 0 {
         let mut guard = bp
-            .fetch_page_at_loc_write(loc)
+            .fetch_page_write(current_page)
             .await
             .map_err(Error::BufferError)?;
         let mut page = HeapPage::new(&mut *guard);
 
         match page.insert(&full_tuple) {
             Ok(slot_id) => {
+                guard.mark_dirty().map_err(Error::BufferError)?;
                 // TODO: guard.commit_wal(lsn) once WAL is implemented
                 return Ok(RecordId {
-                    page_id: page_num,
+                    page_id: current_page,
                     slot_id,
                 });
             }
-            Err(_) => continue, // NoSpace or other error, try next page
+            Err(_) => {
+                // NoSpace or other error, get next page and try it
+                let next = page.header().map(|h| h.next_page).unwrap_or(0);
+                drop(page);
+                drop(guard);
+                current_page = next;
+            }
         }
     }
 
-    // No space in existing pages — allocate a new page.
-    // Update the file header FIRST to prevent crash-window corruption:
-    // if we crash after the header update but before the page write, recovery
-    // sees an empty page (benign). The reverse would reuse the page number.
-    let new_page_num = num_pages
-        .checked_add(1)
-        .ok_or_else(|| Error::CapacityExceeded("heap file num_pages overflow".into()))?;
-
-    let mut header_guard = bp
-        .fetch_page_at_loc_write(header_loc)
-        .await
-        .map_err(Error::BufferError)?;
-    let mut header_page = HeapFileHeaderPage::new(&mut *header_guard);
-    header_page
-        .data_mut()
-        .map_err(|_| Error::PageCorruption("heap file header unwritable".into()))?
-        .num_pages = new_page_num;
-    // Keep header_guard alive until after page write for atomicity
-    // (both writes are under their respective latches).
-
-    let new_loc = PPageId {
-        file: file_id,
-        offset: new_page_num as u64 * PAGE_BUF_SIZE as u64,
-    };
-
-    let mut guard = bp
-        .fetch_page_at_loc_write(new_loc)
-        .await
-        .map_err(Error::BufferError)?;
+    // No space in existing pages — allocate a new page via buffer pool
+    let mut new_guard = bp.new_page(file_id).await.map_err(Error::BufferError)?;
+    let new_lpage_id = new_guard.lpage_id();
 
     // Initialize the new page as an empty heap page
-    let mut page = HeapPage::new(&mut *guard);
-    page.init()
-        .map_err(|_| Error::PageCorruption("failed to init new heap page".into()))?;
+    {
+        let mut page = HeapPage::new(&mut *new_guard);
+        page.init()
+            .map_err(|_| Error::PageCorruption("failed to init new heap page".into()))?;
 
-    let slot_id = page
-        .insert(&full_tuple)
-        .map_err(|_| Error::PageCorruption("insert into fresh page failed".into()))?;
+        // Link new page to old first_page (prepend to list)
+        page.header_mut()
+            .map_err(|_| Error::PageCorruption("failed to access new heap page header".into()))?
+            .next_page = first_page;
 
-    drop(page);
-    drop(guard);
-    drop(header_guard);
+        let slot_id = page
+            .insert(&full_tuple)
+            .map_err(|_| Error::PageCorruption("insert into fresh page failed".into()))?;
 
-    // TODO: header_guard.commit_wal(lsn)
+        new_guard.mark_dirty().map_err(Error::BufferError)?;
 
-    Ok(RecordId {
-        page_id: new_page_num,
-        slot_id,
-    })
+        // Now update the file header to point to the new page (prepend)
+        let mut header_guard = bp
+            .fetch_page_at_loc_write(header_loc)
+            .await
+            .map_err(Error::BufferError)?;
+        let mut header_page = HeapFileHeaderPage::new(&mut *header_guard);
+        header_page
+            .data_mut()
+            .map_err(|_| Error::PageCorruption("heap file header unwritable".into()))?
+            .first_page = new_lpage_id;
+        header_guard.mark_dirty().map_err(Error::BufferError)?;
+
+        // TODO: header_guard.commit_wal(lsn)
+
+        Ok(RecordId {
+            page_id: new_lpage_id,
+            slot_id,
+        })
+    }
 }
 
 // ============================================================================
@@ -259,19 +254,17 @@ pub(super) async fn insert<'a, B: BufferPool>(
 // ============================================================================
 
 /// Fetch a single tuple by RecordId, checking MVCC visibility.
+///
+/// The RecordId.page_id is a global LPageId, so we fetch directly by that ID.
 pub(super) async fn get<'a, B: BufferPool>(
     bp: &'a B,
-    file_id: FileId,
+    _file_id: FileId,
     txn: &Txn,
     rid: aliases::RecordId,
 ) -> Result<Vec<u8>> {
-    let loc = PPageId {
-        file: file_id,
-        offset: rid.page_id as u64 * PAGE_BUF_SIZE as u64,
-    };
-
+    // RecordId.page_id is a global LPageId - fetch directly
     let guard = bp
-        .fetch_page_at_loc_read(loc)
+        .fetch_page_read(rid.page_id)
         .await
         .map_err(Error::BufferError)?;
     let page = HeapPage::new(&*guard);
@@ -304,19 +297,17 @@ pub(super) async fn get<'a, B: BufferPool>(
 ///
 /// Checks visibility before deleting — a transaction cannot delete a tuple
 /// it cannot see, and cannot double-delete a tuple already marked deleted.
+///
+/// The RecordId.page_id is a global LPageId, so we fetch directly by that ID.
 pub(super) async fn delete<'a, B: BufferPool>(
     bp: &'a B,
-    file_id: FileId,
+    _file_id: FileId,
     txn: &Txn,
     rid: aliases::RecordId,
 ) -> Result<()> {
-    let loc = PPageId {
-        file: file_id,
-        offset: rid.page_id as u64 * PAGE_BUF_SIZE as u64,
-    };
-
+    // RecordId.page_id is a global LPageId - fetch directly
     let mut guard = bp
-        .fetch_page_at_loc_write(loc)
+        .fetch_page_write(rid.page_id)
         .await
         .map_err(Error::BufferError)?;
     let mut page = HeapPage::new(&mut *guard);
@@ -348,6 +339,7 @@ pub(super) async fn delete<'a, B: BufferPool>(
     // Set XMAX to mark as deleted for this transaction
     visibility::write_xmax(data, txn.id);
 
+    guard.mark_dirty().map_err(Error::BufferError)?;
     // TODO: guard.commit_wal(lsn)
 
     Ok(())

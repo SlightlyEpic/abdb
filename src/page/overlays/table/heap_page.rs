@@ -2,7 +2,7 @@ use std::mem::size_of;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
-    common::constants::PAGE_BUF_SIZE,
+    common::{aliases::LPageId, constants::PAGE_BUF_SIZE},
     page::{UberPageHeader, overlays},
 };
 
@@ -15,7 +15,8 @@ pub struct HeapPage<T> {
 pub struct Header {
     pub num_slots: u16,
     pub data_offset: u16,
-    _pad: [u8; 4],
+    /// Next page in the heap linked list (0 = end of list)
+    pub next_page: LPageId,
 }
 
 #[derive(Debug, Clone, Copy, FromBytes, IntoBytes, KnownLayout, Immutable)]
@@ -136,6 +137,7 @@ where
         let header = self.header_mut()?;
         header.num_slots = 0;
         header.data_offset = PAGE_BUF_SIZE as u16;
+        header.next_page = 0;
         Ok(())
     }
 

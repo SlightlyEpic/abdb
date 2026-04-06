@@ -13,6 +13,13 @@ pub struct PinGuard<'a, D: DiskManager> {
     buffer_pool: &'a BufferPool<D>,
 }
 
+impl<'a, D: DiskManager> PinGuard<'a, D> {
+    /// Get the logical page ID for this frame.
+    pub fn lpage_id(&self) -> aliases::LPageId {
+        self.buffer_pool.frame_lpage_id(self.frame_idx)
+    }
+}
+
 impl<'a, D: DiskManager> Drop for PinGuard<'a, D> {
     fn drop(&mut self) {
         self.buffer_pool.decr_pin(self.frame_idx);
@@ -43,6 +50,11 @@ impl<'a, D: DiskManager> PageReadGuard<'a, D> {
             page,
             _latch_guard: latch_guard,
         }
+    }
+
+    /// Get the logical page ID for this page.
+    pub fn lpage_id(&self) -> aliases::LPageId {
+        self._pin_guard.lpage_id()
     }
 }
 
@@ -78,6 +90,11 @@ impl<'a, D: DiskManager> PageWriteGuard<'a, D> {
             _latch_guard: latch_guard,
         }
     }
+
+    /// Get the logical page ID for this page.
+    pub fn lpage_id(&self) -> aliases::LPageId {
+        self._pin_guard.lpage_id()
+    }
 }
 
 impl<'a, D: DiskManager> Deref for PageWriteGuard<'a, D> {
@@ -94,9 +111,18 @@ impl<'a, D: DiskManager> DerefMut for PageWriteGuard<'a, D> {
     }
 }
 
-impl<'a, D: DiskManager> buffer::PageReadGuard for PageReadGuard<'a, D> {}
+impl<'a, D: DiskManager> buffer::PageReadGuard for PageReadGuard<'a, D> {
+    fn lpage_id(&self) -> aliases::LPageId {
+        self._pin_guard.lpage_id()
+    }
+}
+
 impl<'a, D: DiskManager> buffer::PageWriteGuard for PageWriteGuard<'a, D> {
     type PageReadGuard = PageReadGuard<'a, D>;
+
+    fn lpage_id(&self) -> aliases::LPageId {
+        self._pin_guard.lpage_id()
+    }
 
     fn commit_wal(
         &mut self,
