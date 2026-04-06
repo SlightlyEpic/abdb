@@ -1,7 +1,7 @@
 # ABDB - Implementation Progress
 
 > No WAL — all writes go directly to disk via the buffer pool.
-> Last updated: 2026-04-04
+> Last updated: 2026-04-06
 
 ---
 
@@ -236,10 +236,15 @@ Disk (files: .heap, .idx, .dir)
 - [x] `Value` enum (runtime typed values)
 - [x] `TryFrom<u8>` for DataType
 - [x] `Into<u8>` for DataType
-- [ ] `Value` comparison operators (Ord, PartialOrd, Eq)
-- [ ] `Value` arithmetic operators
-- [ ] `Value` serialization to/from bytes
-- [ ] `Value` type coercion/casting
+- [x] `Value` PartialOrd — SQL-style null ordering, cross-type f64 promotion
+- [x] `Value` PartialEq
+- [x] `Value::to_bytes` — serialize to little-endian bytes
+- [x] `Value::from_bytes` — deserialize from bytes + DataType
+- [x] `Value::cast` — widening numeric casts, any -> String, int -> Bool
+- [x] `Value::to_i64`, `to_u64`, `to_f64` — lossless numeric conversion
+- [x] `Value::data_type`, `is_null` helpers
+- [x] `DataType` helpers — `fixed_size`, `is_numeric`, `is_signed_int`, `is_unsigned_int`, `is_float`
+- [x] Unit tests — roundtrip, cast, ordering, type helpers
 
 ### TupleLayout
 
@@ -247,10 +252,9 @@ Disk (files: .heap, .idx, .dir)
 - [x] Null bitmap offset computation
 - [x] Fixed-width column offset computation with alignment
 - [x] Variable-length string pointer layout (u16 length + u16 offset)
-- [ ] `read_field` — read a typed field from a tuple byte slice
-- [ ] `write_field` — write a typed value into a tuple byte slice
-- [ ] `serialize_tuple` — convert Vec<Value> to byte slice using layout
-- [ ] `deserialize_tuple` — convert byte slice to Vec<Value> using layout
+- [x] `read_field` — read a typed field from a tuple byte slice (all types incl. String)
+- [x] `write_field` — write a typed value into a tuple byte slice (fixed-width + null bitmap)
+- [x] Unit tests — layout offsets, read/write roundtrip, string returns false
 
 ---
 
@@ -258,36 +262,37 @@ Disk (files: .heap, .idx, .dir)
 
 ### Infrastructure
 
-- [x] `BindError` enum with error variants
-- [x] `Binder<A>` struct with table scope stack
-- [x] `BoundStatement` enum (CreateTable, Insert, Update, Delete, Select)
-- [x] `BoundExpr` enum (Constant, ColumnRef, UnaryOp, BinaryOp, Star)
-- [x] `BoundTableRef` enum (BaseTable, Join, CrossProduct, Subquery)
-- [x] `BoundSelect` struct with all clauses
-- [x] `BoundCreateTable`, `BoundInsert`, `BoundUpdate`, `BoundDelete` structs
-- [x] `ColumnDef` struct
-- [x] Operator enums (UnaryOperator, BinaryOperator, JoinType)
+- [x] `BindError` enum with error variants (25+ variants)
+- [x] `Binder<A>` struct with accessor + scope + OID allocator
+- [x] `BoundStatement` enum (all DDL, DML, Explain)
+- [x] `BoundExpr` / `BoundExprKind` — full expression tree (Literal, ColumnRef, BinaryOp, UnaryOp, IsNull, Like, Between, In, InSubquery, Exists, Subquery, Function, Cast, Case)
+- [x] `BoundTableRef` enum (BaseTable, Subquery)
+- [x] `BoundSelect` struct with all clauses (projections, from, joins, where, group_by, having, order_by, limit, offset, distinct)
+- [x] `BoundCreateTable`, `BoundDropTable`, `BoundAlterTable`, `BoundCreateIndex`, `BoundDropIndex`
+- [x] `BoundInsert`, `BoundUpdate`, `BoundDelete`
+- [x] `BoundJoinKind`, `BoundJoinCondition` (On, Using, Natural, None)
+- [x] `FunctionKind` enum (Count, Sum, Avg, Min, Max, Coalesce, Nullif, Upper, Lower, Length, Abs)
+- [x] `OutputColumn` struct
+- [x] `OidAllocator` — monotonic OID generation for binder
+- [x] `Scope` / `ScopeColumn` — column resolution with qualifier support
 
-### Binding Methods (all stubbed `todo!()`)
+### Binding Methods
 
-- [ ] `bind_statement` — dispatch to specific binders
-- [ ] `bind_create_table` — validate table definition
-- [ ] `bind_insert` — resolve table, validate columns and values
-- [ ] `bind_update` — resolve table, validate assignments
-- [ ] `bind_delete` — resolve table, validate WHERE clause
-- [ ] `bind_query` — bind top-level query (with ORDER BY, LIMIT)
-- [ ] `bind_select` — bind SELECT with FROM, WHERE, GROUP BY
-- [ ] `bind_table_with_joins` — resolve table references with joins
-- [ ] `bind_table_ref` — resolve single table reference
-- [ ] `bind_join_constraint` — resolve ON/USING clause
-- [ ] `bind_select_list` — resolve projection columns
-- [ ] `bind_expr` — recursive expression binding
-- [ ] `bind_value` — literal value binding
-- [ ] `bind_data_type` — SQL type to DataType mapping
-- [ ] `bind_binary_op` — SQL binary op to BinaryOperator
-- [ ] `bind_unary_op` — SQL unary op to UnaryOperator
-- [ ] `push_table_scope` / `pop_table_scope` — scope management
-- [ ] `resolve_column` — column name resolution in scope
+- [x] `bind_statement` — dispatch to specific binders
+- [x] `bind_create_table` — validate columns, PK, FK, allocate OIDs
+- [x] `bind_drop_table` — resolve table, collect index OIDs
+- [x] `bind_alter_table` — add/drop/rename column, alter type, FK, PK
+- [x] `bind_create_index` / `bind_drop_index`
+- [x] `bind_insert` — resolve table, validate column count, bind source (Values/Select)
+- [x] `bind_update` — resolve table, bind assignments + WHERE
+- [x] `bind_delete` — resolve table, bind WHERE
+- [x] `bind_select` — full SELECT binding (FROM, joins, WHERE, GROUP BY, HAVING, projections, ORDER BY, LIMIT, DISTINCT)
+- [x] `bind_table_ref` — BaseTable (with alias) and Subquery
+- [x] `bind_join_condition` — ON, USING, NATURAL, cross join
+- [x] `bind_expr` — recursive expression binding for all BoundExprKind variants
+- [x] `bind_function` — resolve function name to FunctionKind, validate args
+- [x] Scope management — push/pop for subqueries, column resolution with ambiguity detection
+- [ ] Known issue: `bind_join_condition` moves `join.kind` causing borrow-after-move (pre-existing bug in binder.rs:469)
 
 ---
 
@@ -295,28 +300,29 @@ Disk (files: .heap, .idx, .dir)
 
 ### Infrastructure
 
-- [x] `PlanError` enum
-- [x] `Planner<A>` struct
-- [x] `PlanNode` enum with all operator variants
-- [x] `Schema` struct for plan node output schemas
-- [x] DDL nodes: `CreateTableNode`, `DropTableNode`
-- [x] DML nodes: `InsertNode`, `UpdateNode`, `DeleteNode`
-- [x] Scan nodes: `SeqScanNode`, `IndexScanNode`
-- [x] Relational nodes: `FilterNode`, `ProjectionNode`
-- [x] Join nodes: `NestedLoopJoinNode`, `HashJoinNode`, `MergeJoinNode`
-- [x] Utility nodes: `SortNode`, `LimitNode`, `ValuesNode`
+- [x] `Planner` struct (stateless, all methods are associated functions)
+- [x] `LogicalPlan` enum — SeqScan, IndexScan, Filter, Projection, Join, Aggregate, Sort, Limit, Distinct, Insert, Update, Delete, Values, DDL pass-through, Nothing
+- [x] `Schema` struct for plan node output schemas (with `len()`, `empty()`)
+- [x] `SeqScan`, `IndexScan` — scan nodes with table/column metadata
+- [x] `Filter`, `Projection`, `Sort`, `Limit`, `Distinct` — unary relational nodes
+- [x] `Join` — binary join with kind + condition
+- [x] `Aggregate` / `AggregateExpr` — group-by + aggregate functions
+- [x] `LogicalInsert`, `LogicalUpdate`, `LogicalDelete` — DML nodes
+- [x] `Values` — inline literal rows
+- [x] `SortKey` — expression + asc/desc + nulls_first
 
-### Planning Methods (all stubbed `todo!()`)
+### Planning Methods
 
-- [ ] `plan` — dispatch bound statement to plan builder
-- [ ] `plan_create_table` — produce CreateTableNode
-- [ ] `plan_insert` — produce InsertNode with child ValuesNode
-- [ ] `plan_update` — produce UpdateNode with child scan
-- [ ] `plan_delete` — produce DeleteNode with child scan
-- [ ] `plan_select` — produce scan + filter + projection tree
-- [ ] `plan_table_ref` — produce scan or join subtree
-- [ ] `plan_base_table` — produce SeqScanNode
-- [ ] `plan_join` — produce join node from bound join
+- [x] `plan` — dispatch BoundStatement to specific planner
+- [x] `plan_select` — full pipeline: FROM -> WHERE -> GROUP BY/HAVING -> Projection -> DISTINCT -> ORDER BY -> LIMIT
+- [x] `plan_from` — resolve FROM clause with joins, merge schemas
+- [x] `plan_table_ref` — BaseTable -> SeqScan, Subquery -> recursive plan_select
+- [x] `plan_insert` — Values or Select source, map target columns, rows_affected schema
+- [x] `plan_update` — SeqScan + optional Filter, assignment propagation
+- [x] `plan_delete` — SeqScan + optional Filter
+- [x] `collect_aggregates` — extract aggregate expressions from projections + having
+- [x] `build_aggregate_schema` — construct output schema for aggregate nodes
+- [x] DDL/transaction pass-through (CreateTable, DropTable, AlterTable, CreateIndex, DropIndex, Begin/Commit/Rollback)
 
 ---
 
@@ -324,58 +330,115 @@ Disk (files: .heap, .idx, .dir)
 
 ### Infrastructure
 
-- [x] `Optimizer<A>` struct
-- [x] `optimize` method pipeline (6 passes)
+- [x] `Optimizer<A>` struct with accessor + transaction
+- [x] `PhysicalPlan` enum — all 23 operator variants (see Executor section)
+- [x] Physical operator structs: `PhysSeqScan`, `PhysIndexScan`, `PhysFilter`, `PhysProjection`, `PhysNestedLoopJoin`, `PhysHashJoin`, `PhysHashAggregate`, `PhysStreamAggregate`, `PhysSort`, `PhysTopN`, `PhysLimit`, `PhysDistinct`, `PhysHashDistinct`, `PhysInsert`, `PhysUpdate`, `PhysDelete`, `PhysValues`
+- [x] `PhysAggregateExpr`, `PhysSortKey` — aggregate and sort metadata
 
-### Optimization Passes (all stubbed `todo!()`)
+### Optimization Passes
 
-- [ ] `push_down_filters` — push predicates closer to scans
-- [ ] `push_down_projections` — eliminate unnecessary columns early
-- [ ] `reorder_joins` — reorder join order for cost reduction
-- [ ] `choose_join_algorithm` — select NLJ/Hash/Merge per join
-- [ ] `choose_access_method` — pick SeqScan vs IndexScan
-- [ ] `merge_operators` — fuse adjacent filter/projection nodes
+- [x] `push_predicates` — recursive predicate pushdown through Filter, Projection, Join, Aggregate, Sort, Limit, Distinct, Update, Delete
+- [x] Join predicate splitting — classify predicates as left-only, right-only, or cross-join; push single-side predicates into children
+- [x] `to_physical` — logical-to-physical plan translation (SeqScan, IndexScan, Filter, Projection, Join, Aggregate, Sort, Limit, Distinct, DML, DDL)
+- [x] `fuse_sort_limit` — merge adjacent Sort + Limit into TopN (recursive over entire tree)
+- [x] Index scan selection — `try_index_scan` extracts index-compatible predicates (Eq, Lt, LtEq, Gt, GtEq on indexed columns), splits into range keys + residual
+- [x] Hash join selection — `extract_equi_keys` detects equality conditions in ON/USING/NATURAL joins, extracts left/right keys + residual
+- [x] Scope index manipulation — `shift_scope_indices` for join predicate rewriting, `collect_scope_indices` for side classification
+- [x] Helper: `split_conjunctions` / `conjoin` — AND decomposition/recomposition
+- [ ] `find_index_for_column` — currently returns None (index selection stub)
+- [ ] Cost-based join reordering
+- [ ] Projection pushdown (eliminate unused columns early)
 
 ---
 
-## 9. Executor (Volcano / Iterator Model)
+## 9. Executor (In-Memory Materialized)
 
-> Not yet started — no executor module exists.
-> Uses the **volcano model**: each operator implements a `next()` method that
-> pulls one tuple at a time from its child operator. Async streams (`Stream`)
-> from the accessor layer map naturally to this pull-based iterator interface.
+> **Complete** — all 23 PhysicalPlan variants handled. Memory-only, no disk spilling.
+> See [docs/executor.md](executor.md) for full design documentation.
 
-- [ ] `Executor` trait — async `next() -> Option<Tuple>` pull interface
-- [ ] `SeqScan` executor — call `accessor.table_scan`, yield tuples
-- [ ] `IndexScan` executor — call `accessor.index_scan`, yield tuples
-- [ ] `Filter` executor — pull from child, evaluate predicate, yield matching
-- [ ] `Projection` executor — pull from child, evaluate expressions, yield projected
-- [ ] `NestedLoopJoin` executor — nested iteration over two children
-- [ ] `HashJoin` executor — build hash table from left, probe with right
-- [ ] `Sort` executor — materialize child, sort (external sort for large sets)
-- [ ] `Limit` executor — yield at most N tuples from child
-- [ ] `Insert` executor — pull from child (Values), call `accessor.table_insert`
-- [ ] `Update` executor — pull from child, call `accessor.table_update`
-- [ ] `Delete` executor — pull from child, call `accessor.table_delete`
-- [ ] `CreateTable` executor — call `accessor.create_table`
-- [ ] `DropTable` executor — call `accessor.drop_table`
-- [ ] `CreateIndex` executor — call `accessor.create_index`, backfill via scan + index_insert
-- [ ] `DropIndex` executor — call `accessor.drop_index`
-- [ ] `Values` executor — produce literal rows from bound expressions
-- [ ] Expression evaluator (evaluate `BoundExpr` against a tuple row)
+### Core
+
+- [x] `Executor<A: Accessor>` struct — generic over accessor, takes Arc<A> + Txn
+- [x] `execute(plan) -> ExecResult<Vec<Row>>` — async entry point
+- [x] Recursive `exec()` dispatch — exhaustive match over all PhysicalPlan variants
+- [x] `ExecError` enum (Accessor, Eval, Internal) with Display + Error impls
+- [x] `Row` type alias (`Vec<Value>`)
+
+### Expression Evaluator (`eval.rs`)
+
+- [x] `eval_expr(expr, row) -> Value` — pure expression evaluation
+- [x] Literal, ColumnRef, BinaryOp (arithmetic, comparison, logical, concat)
+- [x] UnaryOp (Neg, Not), IsNull, IsNotNull
+- [x] LIKE pattern matching (%, _) — iterative backtracking algorithm
+- [x] BETWEEN (with negation), IN (with negation)
+- [x] CASE (simple + searched), CAST (delegates to Value::cast)
+- [x] Scalar functions: COALESCE, NULLIF, UPPER, LOWER, LENGTH, ABS
+- [x] SQL three-valued NULL propagation (AND/OR short-circuit)
+- [x] `eval_to_bool` helper — NULL/non-bool -> false
+
+### Tuple Codec (`codec.rs`)
+
+- [x] `decode_row(layout, columns, raw)` — raw tuple bytes -> Vec<Value> via TupleLayout
+- [x] `encode_row(layout, columns, values)` — Vec<Value> -> raw tuple bytes (fixed + variable-length strings)
+
+### Scan Operators
+
+- [x] `SeqScan` — stream table via accessor, decode via TupleLayout, apply pushed predicates
+- [x] `IndexScan` — range-scan B-tree, fetch tuples by RID via table_get, apply residual predicates
+
+### Relational Operators
+
+- [x] `Filter` — eval predicate, retain matching rows
+- [x] `Projection` — eval expressions per row, with aggregate-alias resolution for projections above aggregate nodes
+- [x] `NestedLoopJoin` — O(N*M) with Inner, Left/Right/Full Outer support via matched-row tracking
+- [x] `HashJoin` — build on right, probe with left, residual predicate, all four join kinds
+- [x] `HashAggregate` — group-by hashing, Accumulator per group (COUNT, SUM, AVG, MIN, MAX), DISTINCT aggregates via HashSet, scalar aggregates on empty input
+- [x] `StreamAggregate` — delegates to HashAggregate (equivalent when fully materialized)
+- [x] `Sort` — in-memory sort_by with null-aware comparator (ASC/DESC, NULLS FIRST/LAST)
+- [x] `TopN` — full sort + skip(offset) + take(limit)
+- [x] `Limit` — skip(offset) + take(limit)
+- [x] `Distinct` / `HashDistinct` — HashSet-based dedup using serialized row keys
+- [x] `Values` — evaluate literal expression rows
+
+### DML Operators
+
+- [x] `Insert` — execute source, map target to full table columns, encode via TupleLayout, call table_insert. Returns rows_affected
+- [x] `Update` — scan_with_rids, evaluate assignments, delete old + insert new. Returns rows_affected
+- [x] `Delete` — scan_with_rids, call table_delete. Returns rows_affected
+- [x] `scan_with_rids` — specialized scan path preserving RecordIds through SeqScan/IndexScan/Filter chains
+
+### DDL Operators
+
+- [x] `CreateTable`, `DropTable`, `AlterTable`, `CreateIndex`, `DropIndex` — return empty rows (catalog mutation handled by session/accessor layer)
+- [x] `Nothing` — return empty (transaction control: BEGIN/COMMIT/ROLLBACK)
+
+### Hashing Utilities
+
+- [x] `row_to_key` — deterministic byte serialization of Vec<Value> for HashMap keys (type-tagged, length-prefixed for strings)
+- [x] `eval_key` — evaluate expressions then serialize for hash join/aggregate probing
+
+### Known Limitations
+
+- [ ] No spill-to-disk for sort, hash join, or aggregation
+- [ ] Subquery expressions (IN SELECT, EXISTS, scalar subquery) return Null
+- [ ] Compound aggregate expressions in projections (e.g. COUNT(*)+1) not rewritten
+- [ ] TopN uses full sort instead of heap-based partial sort
+- [ ] Update uses delete+insert instead of in-place update
+- [ ] CREATE INDEX doesn't backfill existing table data into new index
 
 ---
 
 ## 10. Transaction Manager
 
-> Not yet started — only the `Txn` struct exists.
-
 - [x] `Txn` struct (id, isolation level)
-- [x] `IsolationLevel` enum (ReadUncommitted, ReadCommitted, Snapshot)
-- [ ] Transaction manager (begin, commit, abort)
-- [ ] Transaction ID generation (monotonic counter)
+- [x] `IsolationLevel` enum (ReadUncommitted, ReadCommitted, RepeatableRead, Snapshot, Serializable) with Display
+- [x] `Transaction` struct (txn_id, read_ts, commit_ts, state, isolation_level)
+- [x] `TxnState` enum (Active, Committed, Aborted)
+- [x] `TransactionManager` — begin() with monotonic txn_id + read_ts
+- [x] `current_ts()` — read current timestamp
+- [ ] `commit()` — stubbed `todo!()`
+- [ ] `abort()` — not yet implemented
 - [ ] Active transaction tracking (for visibility checks)
-- [ ] Commit/abort status tracking
 - [ ] Snapshot isolation — maintain read snapshot of active txns at start
 
 ---
@@ -393,11 +456,13 @@ Disk (files: .heap, .idx, .dir)
 ## 12. SQL Frontend (End-to-End Pipeline)
 
 - [x] `sqlparser` dependency for parsing
-- [ ] Parse SQL string -> AST (wire up sqlparser)
-- [ ] AST -> BoundStatement (binder)
-- [ ] BoundStatement -> PlanNode (planner)
-- [ ] PlanNode -> optimized PlanNode (optimizer)
-- [ ] PlanNode -> query result (executor)
+- [x] Parser module — AST types (Statement, Expr, SelectStmt, etc.) with all SQL constructs
+- [x] AST -> BoundStatement (binder — fully implemented)
+- [x] BoundStatement -> LogicalPlan (planner — fully implemented)
+- [x] LogicalPlan -> PhysicalPlan (optimizer — fully implemented)
+- [x] PhysicalPlan -> Vec<Row> (executor — fully implemented)
+- [x] `Session` struct — holds accessor, txn_manager, session state (Idle/InTransaction/Failed)
+- [ ] `Session::execute_sql` — end-to-end pipeline wiring (stubbed `todo!()`)
 - [ ] Result formatting (rows -> display)
 - [ ] Error reporting (user-facing error messages)
 
@@ -439,13 +504,13 @@ Disk (files: .heap, .idx, .dir)
 | Storage Layer | Traits only | ~10% |
 | Buffer Pool | Mostly done | ~65% |
 | **Accessor** | **Complete** | **~95%** |
-| Data Types / Layout | Types done, serialization missing | ~40% |
-| Binder | Scaffolded, all stubs | ~15% |
-| Planner | Scaffolded, all stubs | ~15% |
-| Optimizer | Scaffolded, all stubs | ~10% |
-| Executor (Volcano) | Not started | 0% |
-| Transaction Manager | Struct only | ~10% |
+| **Data Types / Layout** | **Complete** | **~95%** |
+| **Binder** | **Complete** (1 known bug) | **~90%** |
+| **Planner** | **Complete** | **~95%** |
+| **Optimizer** | **Complete** (index selection stub) | **~85%** |
+| **Executor** | **Complete** (memory-only, all 23 operators) | **~90%** |
+| Transaction Manager | Begin works, commit/abort stubbed | ~30% |
 | DB Bootstrap | Not started | 0% |
-| SQL Frontend | Parser only | ~5% |
+| SQL Frontend | All stages done, pipeline not wired | ~80% |
 | Testing | Minimal | ~10% |
 | CLI / main | Placeholder | ~5% |
