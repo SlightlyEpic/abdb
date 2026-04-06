@@ -1,4 +1,4 @@
-use crate::databox::DataType;
+use crate::{databox::DataType, transaction::IsolationLevel};
 
 #[derive(Debug, Clone)]
 pub struct ColumnDef {
@@ -12,7 +12,7 @@ pub struct ColumnDef {
 
 #[derive(Debug, Clone)]
 pub enum Statement {
-    BeginTransaction,
+    BeginTransaction(IsolationLevel),
     Commit,
     Rollback,
 
@@ -156,7 +156,7 @@ pub struct Join {
     pub condition: JoinCondition,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum JoinKind {
     Inner,
     LeftOuter,

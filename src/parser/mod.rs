@@ -7,6 +7,8 @@ use sqlparser::parser::Parser as SqParser;
 
 use crate::databox::DataType;
 use crate::error::{DbError, Result};
+use crate::session::DEFAULT_ISOLATION_LEVEL;
+use crate::transaction::IsolationLevel;
 use ast::*;
 
 pub struct Parser;
@@ -22,7 +24,52 @@ impl Parser {
 
 fn translate_statement(stmt: sq::Statement) -> Result<Statement> {
     match stmt {
-        sq::Statement::StartTransaction { .. } => Ok(Statement::BeginTransaction),
+        sq::Statement::StartTransaction {
+            modes,
+            modifier,
+            statements,
+            exception,
+            .. // Rest of these are syntactical variations.
+        } => {
+            let isolation_level = match modes.as_slice() {
+                [] => DEFAULT_ISOLATION_LEVEL,
+
+                [sq::TransactionMode::IsolationLevel(isl)] => match isl {
+                    sq::TransactionIsolationLevel::ReadCommitted    => IsolationLevel::ReadCommitted,
+                    sq::TransactionIsolationLevel::ReadUncommitted  => IsolationLevel::ReadUncommitted,
+                    sq::TransactionIsolationLevel::RepeatableRead   => IsolationLevel::RepeatableRead,
+                    sq::TransactionIsolationLevel::Snapshot         => IsolationLevel::Snapshot,
+                    sq::TransactionIsolationLevel::Serializable     => IsolationLevel::Serializable,
+                },
+
+                [mode] => {
+                    return Err(DbError::Parse(format!(
+                        "unsupported transaction mode: {}",
+                        mode
+                    )));
+                }
+
+                _ => {
+                    return Err(DbError::Parse(
+                        "too many transaction modes specified".into(),
+                    ));
+                }
+            };
+
+            if modifier.is_some() {
+                return Err(DbError::Parse("transaction modifiers are not supported".into()));
+            }
+
+            if !statements.is_empty() {
+                return Err(DbError::Parse("transaction statements are not supported".into()));
+            }
+
+            if exception.is_some() {
+                return Err(DbError::Parse("transaction exceptions are not supported".into()));
+            }
+
+            Ok(Statement::BeginTransaction(isolation_level))
+        }
         sq::Statement::Commit { .. } => Ok(Statement::Commit),
         sq::Statement::Rollback { .. } => Ok(Statement::Rollback),
 
@@ -959,5 +1006,42 @@ pub fn translate_data_type(dt: &sq::DataType) -> Result<DataType> {
             "unsupported data type: {:?}",
             other
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_start_transaction() {
+        let valid_stmts = [
+            "BEGIN;",
+            "BEGIN TRANSACTION;",
+            "BEGIN WORK;",
+            "START TRANSACTION;",
+            "BEGIN ISOLATION LEVEL READ COMMITTED;",
+            "BEGIN ISOLATION LEVEL SERIALIZABLE;",
+        ];
+
+        for sql in &valid_stmts {
+            let res = Parser::parse(sql);
+            assert!(res.is_ok(), "Expected valid SQL, got error: {:?}, sql: {}", res, sql);
+        }
+    }
+
+    #[test]
+    fn test_invalid_start_transaction() {
+        let invalid_stmts = [
+            "BEGIN SELECT 1 END;",
+            "BEGIN EXCEPTION WHEN ERROR THEN SELECT 2 END;",
+            "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED ISOLATION LEVEL SERIALIZABLE;",
+            "BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY;",
+        ];
+
+        for sql in &invalid_stmts {
+            let res = Parser::parse(sql);
+            assert!(res.is_err(), "Expected parse error, got: {:?}, sql: {}", res, sql);
+        }
     }
 }

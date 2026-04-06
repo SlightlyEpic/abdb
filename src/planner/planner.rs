@@ -15,10 +15,6 @@ pub struct Planner;
 impl Planner {
     pub fn plan(stmt: BoundStatement) -> Result<LogicalPlan> {
         match stmt {
-            BoundStatement::BeginTransaction => Ok(LogicalPlan::Nothing),
-            BoundStatement::Commit => Ok(LogicalPlan::Nothing),
-            BoundStatement::Rollback => Ok(LogicalPlan::Nothing),
-
             BoundStatement::Select(s) => Self::plan_select(s),
             BoundStatement::Insert(s) => Self::plan_insert(s),
             BoundStatement::Update(s) => Self::plan_update(s),

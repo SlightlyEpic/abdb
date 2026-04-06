@@ -97,4 +97,8 @@ impl TransactionManager {
     pub fn commit(&self, _txn: &mut Transaction) -> Result<()> {
         todo!();
     }
+
+    pub fn rollback(&self, _txn: &mut Transaction) -> Result<()> {
+        todo!();
+    }
 }

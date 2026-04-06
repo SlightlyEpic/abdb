@@ -7,9 +7,6 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub enum BoundStatement {
-    BeginTransaction,
-    Commit,
-    Rollback,
     CreateTable(BoundCreateTable),
     DropTable(BoundDropTable),
     AlterTable(BoundAlterTable),
