@@ -1,7 +1,7 @@
 use futures::stream::Stream;
 
 use crate::{
-    buffer::BufferPool,
+    buffer::{BufferPool, PageWriteGuard},
     common::{
         aliases::{self, FileId, LPageId, PPageId, RecordId},
         txn::Txn,

@@ -3,7 +3,7 @@ use futures::stream::Stream;
 use zerocopy::FromBytes;
 
 use crate::{
-    buffer::BufferPool,
+    buffer::{BufferPool, PageWriteGuard},
     common::{
         aliases::{FileId, LPageId, PPageId, PageBuffer, RecordId},
         txn::Txn,

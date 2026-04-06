@@ -462,11 +462,12 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
                 is_left_or_full || is_right_or_full,
             );
 
+            let join_kind = join.kind.clone();
             let condition =
                 self.bind_join_condition(join.condition, join.kind, &scope, &bound_ref)?;
 
             bound_joins.push(BoundJoin {
-                kind: translate_join_kind(join.kind.clone()),
+                kind: translate_join_kind(join_kind),
                 table: bound_ref,
                 condition,
             });
