@@ -162,6 +162,18 @@ impl<D: DiskManager> BufferPool<D> {
         }
     }
 
+    /// Get the logical page ID for a frame.
+    ///
+    /// # Panics
+    /// Panics if the frame is vacant (should only be called on pinned frames).
+    pub fn frame_lpage_id(&self, frame_idx: usize) -> aliases::LPageId {
+        let meta = self.frame_meta_read();
+        match &meta[frame_idx] {
+            FrameMeta::Loaded { lpage_id, .. } => *lpage_id,
+            FrameMeta::Vacant => panic!("attempted to get lpage_id of vacant frame"),
+        }
+    }
+
     async fn evict(&self) -> buffer::Result<()> {
         loop {
             // 1. Ask the policy for a victim

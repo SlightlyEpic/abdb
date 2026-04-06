@@ -19,7 +19,8 @@ pub const MAGIC: [u8; 8] = *b"ABDB_HEP";
 #[repr(C)]
 pub struct Data {
     pub magic: [u8; 8],
-    pub num_pages: u32,
+    /// First page in the heap linked list (0 = empty)
+    pub first_page: LPageId,
     pub table_oid: OId,
     pub free_list_root: u32,
     pub version: u16,
@@ -125,7 +126,7 @@ where
 
         let header_data = Data {
             magic: MAGIC,
-            num_pages: 0,
+            first_page: 0,
             table_oid,
             free_list_root: 0,
             version: 1,
@@ -178,7 +179,7 @@ mod tests {
         let data = page.data().unwrap();
         assert_eq!(&data.magic, b"ABDB_HEP");
         assert_eq!(data.table_oid, 42);
-        assert_eq!(data.num_pages, 0);
+        assert_eq!(data.first_page, 0);
         assert_eq!(data.version, 1);
     }
 
@@ -201,8 +202,8 @@ mod tests {
         let buffer = [0u8; PAGE_BUF_SIZE];
         let mut page = HeapFileHeaderPage::init(buffer, 0, 1);
 
-        page.data_mut().unwrap().num_pages = 100;
-        assert_eq!(page.data().unwrap().num_pages, 100);
+        page.data_mut().unwrap().first_page = 100;
+        assert_eq!(page.data().unwrap().first_page, 100);
 
         page.data_mut().unwrap().free_list_root = 55;
         assert_eq!(page.data().unwrap().free_list_root, 55);

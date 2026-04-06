@@ -6,7 +6,6 @@ use crate::{
     buffer::BufferPool,
     common::{
         aliases::{FileId, LPageId, PPageId, PageBuffer, RecordId},
-        constants::PAGE_BUF_SIZE,
         txn::Txn,
     },
     page::{
@@ -44,12 +43,12 @@ fn key_to_bytes(key: u64) -> Vec<u8> {
     key.to_le_bytes().to_vec()
 }
 
-/// Convert a PPageId for a given file and page number.
+/// Get the PPageId for the file header (always at offset 0).
 #[inline]
-fn page_loc(file_id: FileId, page_num: LPageId) -> PPageId {
+fn header_loc(file_id: FileId) -> PPageId {
     PPageId {
         file: file_id,
-        offset: page_num as u64 * PAGE_BUF_SIZE as u64,
+        offset: 0,
     }
 }
 
@@ -63,16 +62,14 @@ fn page_loc(file_id: FileId, page_num: LPageId) -> PPageId {
 /// (no latch coupling needed for pure reads).
 async fn find_leaf<B: BufferPool>(
     bp: &'_ B,
-    file_id: FileId,
     root_page: LPageId,
     key: u64,
 ) -> Result<LPageId> {
     let mut current = root_page;
 
     loop {
-        let loc = page_loc(file_id, current);
         let guard = bp
-            .fetch_page_at_loc_read(loc)
+            .fetch_page_read(current)
             .await
             .map_err(Error::BufferError)?;
 
@@ -108,7 +105,6 @@ async fn find_leaf<B: BufferPool>(
 /// numbers from root to the parent of the leaf: `[root, ..., parent]`.
 async fn find_leaf_with_path<B: BufferPool>(
     bp: &'_ B,
-    file_id: FileId,
     root_page: LPageId,
     key: u64,
 ) -> Result<(LPageId, Vec<LPageId>)> {
@@ -116,9 +112,8 @@ async fn find_leaf_with_path<B: BufferPool>(
     let mut path = Vec::new();
 
     loop {
-        let loc = page_loc(file_id, current);
         let guard = bp
-            .fetch_page_at_loc_read(loc)
+            .fetch_page_read(current)
             .await
             .map_err(Error::BufferError)?;
 
@@ -152,32 +147,20 @@ async fn find_leaf_with_path<B: BufferPool>(
 // PAGE ALLOCATION & FILE HEADER HELPERS
 // ============================================================================
 
-/// Allocate a new page in the index file.
+/// Allocate a new page in the index file via the buffer pool.
 ///
-/// Acquires a write latch on the file header, increments `num_pages`,
-/// and returns the new page number.
-async fn alloc_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<LPageId> {
-    let header_loc = page_loc(file_id, 0);
-    let mut guard = bp
-        .fetch_page_at_loc_write(header_loc)
-        .await
-        .map_err(Error::BufferError)?;
-    let mut header = IndexFileHeaderPage::new(&mut *guard);
-    let data = header
-        .data_mut()
-        .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
-    data.num_pages = data
-        .num_pages
-        .checked_add(1)
-        .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
-    Ok(data.num_pages)
+/// Uses `bp.new_page()` which allocates an LPageId, registers it in the
+/// page directory, and returns a write guard for the new page.
+async fn alloc_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<(LPageId, B::WriteGuard<'_>)> {
+    let guard = bp.new_page(file_id).await.map_err(Error::BufferError)?;
+    let lpage_id = guard.lpage_id();
+    Ok((lpage_id, guard))
 }
 
 /// Update the root_page pointer in the index file header.
 async fn set_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId, new_root: LPageId) -> Result<()> {
-    let header_loc = page_loc(file_id, 0);
     let mut guard = bp
-        .fetch_page_at_loc_write(header_loc)
+        .fetch_page_at_loc_write(header_loc(file_id))
         .await
         .map_err(Error::BufferError)?;
     let mut header = IndexFileHeaderPage::new(&mut *guard);
@@ -185,42 +168,47 @@ async fn set_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId, new_root: LPag
         .data_mut()
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
     data.root_page = new_root;
+    guard.mark_dirty().map_err(Error::BufferError)?;
     Ok(())
 }
 
-/// Atomically allocate a new page and set it as root in one header latch.
+/// Atomically allocate a new page and set it as root.
 ///
-/// This prevents the race where two concurrent inserts both exhaust their
-/// ancestor locks, each call `alloc_page` + `set_root_page` separately,
-/// and the second write silently orphans the first new root.
+/// Allocates a new page via buffer pool, then updates the root pointer in the
+/// header while holding both latches. This prevents the race where two
+/// concurrent inserts both exhaust their ancestor locks, each try to create
+/// a new root, and the second write silently orphans the first new root.
+///
+/// Returns `(new_root_lpage_id, old_root_lpage_id, new_root_guard)`.
 async fn alloc_and_set_root<B: BufferPool>(
     bp: &'_ B,
     file_id: FileId,
-) -> Result<(LPageId, LPageId)> {
-    let header_loc = page_loc(file_id, 0);
-    let mut guard = bp
-        .fetch_page_at_loc_write(header_loc)
+) -> Result<(LPageId, LPageId, B::WriteGuard<'_>)> {
+    // Allocate new root page first
+    let new_guard = bp.new_page(file_id).await.map_err(Error::BufferError)?;
+    let new_root = new_guard.lpage_id();
+
+    // Update header to point to new root
+    let mut header_guard = bp
+        .fetch_page_at_loc_write(header_loc(file_id))
         .await
         .map_err(Error::BufferError)?;
-    let mut header = IndexFileHeaderPage::new(&mut *guard);
+    let mut header = IndexFileHeaderPage::new(&mut *header_guard);
     let data = header
         .data_mut()
         .map_err(|_| Error::PageCorruption("index file header unwritable".into()))?;
     let old_root = data.root_page;
-    data.num_pages = data
-        .num_pages
-        .checked_add(1)
-        .ok_or_else(|| Error::CapacityExceeded("index file num_pages overflow".into()))?;
-    let new_root = data.num_pages;
     data.root_page = new_root;
-    Ok((new_root, old_root))
+    header_guard.mark_dirty().map_err(Error::BufferError)?;
+    drop(header_guard);
+
+    Ok((new_root, old_root, new_guard))
 }
 
 /// Read the root page number from the index file header.
 async fn read_root_page<B: BufferPool>(bp: &'_ B, file_id: FileId) -> Result<LPageId> {
-    let header_loc = page_loc(file_id, 0);
     let guard = bp
-        .fetch_page_at_loc_read(header_loc)
+        .fetch_page_at_loc_read(header_loc(file_id))
         .await
         .map_err(Error::BufferError)?;
     let header = IndexFileHeaderPage::new(&*guard);
@@ -279,12 +267,7 @@ async fn split_leaf<B: BufferPool>(
     let separator = entries[mid].key;
 
     // Allocate and initialize new leaf with upper half
-    let new_leaf_num = alloc_page(bp, file_id).await?;
-    let new_loc = page_loc(file_id, new_leaf_num);
-    let mut new_guard = bp
-        .fetch_page_at_loc_write(new_loc)
-        .await
-        .map_err(Error::BufferError)?;
+    let (new_leaf_num, mut new_guard) = alloc_page(bp, file_id).await?;
     {
         let mut new_page = BTreeLeafPage::init(&mut *new_guard, new_leaf_num);
         for entry in &entries[mid..] {
@@ -295,6 +278,7 @@ async fn split_leaf<B: BufferPool>(
         new_page.set_next_page(old_next);
         new_page.set_prev_page(leaf_page_num);
     }
+    new_guard.mark_dirty().map_err(Error::BufferError)?;
     drop(new_guard);
 
     // Rebuild old leaf with lower half (re-init preserves page_id)
@@ -311,13 +295,13 @@ async fn split_leaf<B: BufferPool>(
 
     // Update the old right sibling's prev_page pointer
     if old_next != 0 {
-        let sib_loc = page_loc(file_id, old_next);
         let mut sib_guard = bp
-            .fetch_page_at_loc_write(sib_loc)
+            .fetch_page_write(old_next)
             .await
             .map_err(Error::BufferError)?;
         let mut sib_page = BTreeLeafPage::new(&mut *sib_guard);
         sib_page.set_prev_page(new_leaf_num);
+        sib_guard.mark_dirty().map_err(Error::BufferError)?;
     }
 
     Ok((new_leaf_num, separator))
@@ -370,12 +354,7 @@ async fn split_inner<B: BufferPool>(
     let new_leftmost = entries[mid].right_child;
 
     // Allocate and initialize new inner page with upper half
-    let new_inner_num = alloc_page(bp, file_id).await?;
-    let new_loc = page_loc(file_id, new_inner_num);
-    let mut new_guard = bp
-        .fetch_page_at_loc_write(new_loc)
-        .await
-        .map_err(Error::BufferError)?;
+    let (new_inner_num, mut new_guard) = alloc_page(bp, file_id).await?;
     {
         let mut new_page = BTreeInnerPage::init(&mut *new_guard, new_inner_num, new_leftmost);
         for entry in &entries[mid + 1..] {
@@ -384,6 +363,7 @@ async fn split_inner<B: BufferPool>(
                 .map_err(|e| Error::PageCorruption(format!("split new inner: {:?}", e)))?;
         }
     }
+    new_guard.mark_dirty().map_err(Error::BufferError)?;
     drop(new_guard);
 
     // Rebuild old inner page with lower half
@@ -419,7 +399,6 @@ async fn split_inner<B: BufferPool>(
 /// (unsafe) and may need to split. If the leaf is safe, `locked` is empty.
 async fn find_leaf_for_write<B: BufferPool>(
     bp: &'_ B,
-    file_id: FileId,
     root_page: LPageId,
     key: u64,
 ) -> Result<(
@@ -432,9 +411,8 @@ async fn find_leaf_for_write<B: BufferPool>(
     let mut locked: Vec<(LPageId, B::WriteGuard<'_>)> = Vec::new();
 
     loop {
-        let loc = page_loc(file_id, current);
         let guard = bp
-            .fetch_page_at_loc_write(loc)
+            .fetch_page_write(current)
             .await
             .map_err(Error::BufferError)?;
 
@@ -538,19 +516,14 @@ async fn insert_into_ancestors_with_locks<B: BufferPool>(
     // root. Use alloc_and_set_root to atomically allocate and update the root
     // pointer under a single file header latch, preventing races where two
     // concurrent inserts both try to create a new root.
-    let (new_root_num, old_root) = alloc_and_set_root(bp, file_id).await?;
-    let new_root_loc = page_loc(file_id, new_root_num);
-    let mut root_guard = bp
-        .fetch_page_at_loc_write(new_root_loc)
-        .await
-        .map_err(Error::BufferError)?;
+    let (new_root_num, old_root, mut root_guard) = alloc_and_set_root(bp, file_id).await?;
     {
         let mut root_page = BTreeInnerPage::init(&mut *root_guard, new_root_num, old_root);
         root_page
             .insert_separator(sep_key, new_child)
             .map_err(|e| Error::PageCorruption(format!("new root insert: {:?}", e)))?;
     }
-    drop(root_guard);
+    root_guard.mark_dirty().map_err(Error::BufferError)?;
 
     Ok(())
 }
@@ -562,7 +535,6 @@ async fn insert_into_ancestors_with_locks<B: BufferPool>(
 /// State machine for the B-Tree range scan stream.
 struct BTreeScanState<'a, B: BufferPool> {
     bp: &'a B,
-    file_id: FileId,
     current_leaf: LPageId,
     start_key: Option<u64>,
     end_key: Option<u64>,
@@ -595,12 +567,11 @@ pub(super) async fn scan<B: BufferPool>(
         (0, true)
     } else {
         let start_val = start.unwrap_or(0);
-        (find_leaf(bp, file_id, root_page, start_val).await?, false)
+        (find_leaf(bp, root_page, start_val).await?, false)
     };
 
     let state = BTreeScanState {
         bp,
-        file_id,
         current_leaf: leaf_page,
         start_key: start,
         end_key: end,
@@ -628,8 +599,7 @@ pub(super) async fn scan<B: BufferPool>(
             }
 
             let bp = state.bp;
-            let loc = page_loc(state.file_id, state.current_leaf);
-            let guard = match bp.fetch_page_at_loc_read(loc).await {
+            let guard = match bp.fetch_page_read(state.current_leaf).await {
                 Ok(g) => g,
                 Err(e) => return Some((Err(Error::BufferError(e)), state)),
             };
@@ -715,18 +685,13 @@ pub(super) async fn insert<B: BufferPool>(
 
     // Handle empty tree — create root leaf with the first entry
     if root_page == 0 {
-        let new_page_num = alloc_page(bp, file_id).await?;
-        let loc = page_loc(file_id, new_page_num);
-        let mut guard = bp
-            .fetch_page_at_loc_write(loc)
-            .await
-            .map_err(Error::BufferError)?;
+        let (new_page_num, mut guard) = alloc_page(bp, file_id).await?;
         {
             let mut page = BTreeLeafPage::init(&mut *guard, new_page_num);
             page.insert_entry(key_u64, rid.page_id, rid.slot_id)
                 .map_err(|e| Error::PageCorruption(format!("leaf insert: {:?}", e)))?;
         }
-        drop(guard);
+        guard.mark_dirty().map_err(Error::BufferError)?;
 
         set_root_page(bp, file_id, new_page_num).await?;
         return Ok(());
@@ -736,7 +701,7 @@ pub(super) async fn insert<B: BufferPool>(
     // ancestors early. Returns the leaf's write latch plus write latches for
     // all full (unsafe) ancestors that may need to split.
     let (leaf_num, mut leaf_guard, locked) =
-        find_leaf_for_write(bp, file_id, root_page, key_u64).await?;
+        find_leaf_for_write(bp, root_page, key_u64).await?;
 
     let needs_split = {
         let page = BTreeLeafPage::new(&*leaf_guard);
@@ -780,11 +745,10 @@ pub(super) async fn get<B: BufferPool>(bp: &'_ B, file_id: FileId, key: &[u8]) -
     }
 
     // Find leaf
-    let leaf_num = find_leaf(bp, file_id, root_page, key_u64).await?;
+    let leaf_num = find_leaf(bp, root_page, key_u64).await?;
 
-    let loc = page_loc(file_id, leaf_num);
     let guard = bp
-        .fetch_page_at_loc_read(loc)
+        .fetch_page_read(leaf_num)
         .await
         .map_err(Error::BufferError)?;
     let page = BTreeLeafPage::new(&*guard);
@@ -877,9 +841,8 @@ async fn try_merge_leaf<B: BufferPool>(
 
     // Write-latch parent to find merge candidates and prevent concurrent
     // modifications to the parent's child list.
-    let parent_loc = page_loc(file_id, parent_num);
     let mut parent_guard = bp
-        .fetch_page_at_loc_write(parent_loc)
+        .fetch_page_write(parent_num)
         .await
         .map_err(Error::BufferError)?;
 
@@ -889,15 +852,12 @@ async fn try_merge_leaf<B: BufferPool>(
     };
 
     // Write-latch survivor and removed under parent latch to prevent TOCTOU
-    let survivor_loc = page_loc(file_id, merge_info.survivor);
-    let removed_loc = page_loc(file_id, merge_info.removed);
-
     let mut survivor_guard = bp
-        .fetch_page_at_loc_write(survivor_loc)
+        .fetch_page_write(merge_info.survivor)
         .await
         .map_err(Error::BufferError)?;
     let removed_guard = bp
-        .fetch_page_at_loc_write(removed_loc)
+        .fetch_page_write(merge_info.removed)
         .await
         .map_err(Error::BufferError)?;
 
@@ -935,17 +895,17 @@ async fn try_merge_leaf<B: BufferPool>(
         // Survivor takes over removed's right sibling link
         survivor_page.set_next_page(removed_next);
     }
-    drop(survivor_guard);
+    survivor_guard.mark_dirty().map_err(Error::BufferError)?;
 
     // Update removed's right sibling's prev_page to point to survivor
     if removed_next != 0 {
-        let sib_loc = page_loc(file_id, removed_next);
         let mut sib_guard = bp
-            .fetch_page_at_loc_write(sib_loc)
+            .fetch_page_write(removed_next)
             .await
             .map_err(Error::BufferError)?;
         let mut sib_page = BTreeLeafPage::new(&mut *sib_guard);
         sib_page.set_prev_page(merge_info.survivor);
+        sib_guard.mark_dirty().map_err(Error::BufferError)?;
     }
 
     // Remove separator from parent (also removes the removed child pointer)
@@ -955,6 +915,7 @@ async fn try_merge_leaf<B: BufferPool>(
             .delete_separator(merge_info.sep_idx)
             .map_err(|e| Error::PageCorruption(format!("merge delete sep: {:?}", e)))?;
     }
+    parent_guard.mark_dirty().map_err(Error::BufferError)?;
 
     // Check if root should shrink: root inner page with 0 keys means
     // only leftmost_child remains — promote it as the new root
@@ -1000,11 +961,10 @@ pub(super) async fn delete<B: BufferPool>(
     }
 
     // Use path-tracking traversal for potential merge
-    let (leaf_num, path) = find_leaf_with_path(bp, file_id, root_page, key_u64).await?;
+    let (leaf_num, path) = find_leaf_with_path(bp, root_page, key_u64).await?;
 
-    let loc = page_loc(file_id, leaf_num);
     let mut guard = bp
-        .fetch_page_at_loc_write(loc)
+        .fetch_page_write(leaf_num)
         .await
         .map_err(Error::BufferError)?;
 
@@ -1031,7 +991,7 @@ pub(super) async fn delete<B: BufferPool>(
             .map_err(|e| Error::PageCorruption(format!("leaf delete failed: {:?}", e)))?;
         page.can_merge()
     };
-    drop(guard);
+    guard.mark_dirty().map_err(Error::BufferError)?;
 
     if can_merge {
         try_merge_leaf(bp, file_id, leaf_num, &path, root_page).await?;
