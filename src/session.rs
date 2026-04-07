@@ -194,28 +194,60 @@ fn format_result(result: ExecutionResult) -> String {
         ExecutionResult::Ok(msg) => msg,
         ExecutionResult::RowsAffected(n) => format!("{} row(s) affected", n),
         ExecutionResult::Rows { columns, rows } => {
-            if rows.is_empty() {
-                return "(0 rows)".to_string();
+            if columns.is_empty() {
+                return format!("({} row(s))", rows.len());
+            }
+
+            // 1. Initialize column widths with the length of the column headers
+            let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+            
+            // 2. Stringify row values and update maximum column widths
+            let mut stringified_rows = Vec::with_capacity(rows.len());
+            for row in &rows {
+                let str_row: Vec<String> = row.values.iter().map(|v| v.to_string()).collect();
+                for (i, val) in str_row.iter().enumerate() {
+                    if i < col_widths.len() {
+                        col_widths[i] = col_widths[i].max(val.len());
+                    }
+                }
+                stringified_rows.push(str_row);
             }
 
             let mut output = String::new();
 
-            // Header
-            output.push_str(&columns.join(" | "));
+            // 3. Format Header
+            let header_cells: Vec<String> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{:<width$}", c, width = col_widths[i]))
+                .collect();
+            output.push_str(&header_cells.join(" | "));
             output.push('\n');
 
-            // Separator
-            let sep: Vec<String> = columns.iter().map(|c| "-".repeat(c.len().max(4))).collect();
-            output.push_str(&sep.join("-+-"));
+            // 4. Format Separator
+            let sep_cells: Vec<String> = col_widths
+                .iter()
+                .map(|&w| "-".repeat(w))
+                .collect();
+            output.push_str(&sep_cells.join("-+-"));
             output.push('\n');
 
-            // Rows
-            for row in &rows {
-                let vals: Vec<String> = row.values.iter().map(|v| v.to_string()).collect();
-                output.push_str(&vals.join(" | "));
+            // 5. Format Rows
+            for str_row in stringified_rows {
+                let row_cells: Vec<String> = str_row
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, val)| {
+                        // Safely fallback to 0 width if row length exceeds header length
+                        let width = col_widths.get(i).copied().unwrap_or(0);
+                        format!("{:<width$}", val, width = width)
+                    })
+                    .collect();
+                output.push_str(&row_cells.join(" | "));
                 output.push('\n');
             }
 
+            // 6. Footer
             output.push_str(&format!("({} row(s))", rows.len()));
             output
         }

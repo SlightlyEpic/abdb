@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use sqlparser::keywords::FORMAT;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -89,6 +90,12 @@ impl TcpServer {
                 // 1. Split the socket so we can read and write independently
                 let (reader, mut writer) = socket.split();
 
+                let welcome_message = "=== Connected to abdb ===\n\nabdb> ";
+                if writer.write_all(welcome_message.as_bytes()).await.is_err() {
+                    eprintln!("Failed to write welcome message to client {}", addr);
+                    return;
+                }
+
                 // 2. Wrap the reader in a BufReader to handle newline buffering
                 let mut buf_reader = BufReader::new(reader);
                 let mut query = String::new();
@@ -106,17 +113,22 @@ impl TcpServer {
                         Ok(_) => {
                             let sql = query.trim();
                             if sql.is_empty() {
+                                if writer.write_all("abdb>".as_bytes()).await.is_err() {
+                                    println!("Failed to write to client {}", addr);
+                                }
                                 continue;
                             } // Ignore empty lines
 
                             println!("Executing: {}", sql);
 
                             // 4. Send to your database engine
-                            let mut result = match session.execute_sql(sql).await {
-                                Ok(res) => res,
-                                Err(e) => e.to_string(),
-                            };
-                            result.push('\n');
+                            let result = format!(
+                                "\n{}\n\nabdb>", 
+                                match session.execute_sql(sql).await {
+                                    Ok(res) => res,
+                                    Err(e) => e.to_string(),
+                                }
+                            );
 
                             // 5. Send the result back to the client
                             if writer.write_all(result.as_bytes()).await.is_err() {
