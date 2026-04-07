@@ -252,7 +252,19 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         async move {
             let file = self.get_file(loc.file)?;
 
-            tokio::task::block_in_place(|| file.read_exact_at(target, loc.offset))?;
+            // Try to read the page. If the file is too short (new file),
+            // fill with zeros instead of failing.
+            tokio::task::block_in_place(|| {
+                match file.read_exact_at(target, loc.offset) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                        // New file or page beyond current size - initialize with zeros
+                        target.fill(0);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            })?;
 
             Ok(())
         }
