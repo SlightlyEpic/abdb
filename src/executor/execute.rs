@@ -985,17 +985,31 @@ fn execute_insert<'a, A: Accessor>(
         let layout = TupleLayout::from(table_columns.to_vec());
         let mut count = 0u64;
 
-        for row in rows {
-            // Serialize tuple to bytes
-            let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
+        // 1. Sort columns by position to guarantee perfect alignment with TupleLayout
+        let mut sorted_cols = table_columns.to_vec();
+        sorted_cols.sort_by_key(|c| c.position);
 
-            for (idx, col) in target_columns.iter().enumerate() {
-                if let Some(val) = row.get(idx) {
-                    layout.write_field(&col.name, col.position as usize, &mut tuple_bytes, val);
-                }
+        // 2. Extract names in the strictly sorted order
+        let col_names: Vec<&str> = sorted_cols.iter().map(|c| c.name.as_ref()).collect();
+
+        for row in rows {
+            // 3. Build values sequentially so they map 1:1 with col_names
+            let mut full_values = Vec::with_capacity(sorted_cols.len());
+
+            for col in &sorted_cols {
+                // Find if the user provided this column in the INSERT statement
+                let val = target_columns
+                    .iter()
+                    .position(|tc| tc.oid == col.oid)
+                    .and_then(|idx| row.get(idx).cloned())
+                    .unwrap_or(Value::Null);
+
+                full_values.push(val);
             }
 
-            // Insert into table
+            // 4. Safe encoding
+            let tuple_bytes = layout.encode_tuple(&col_names, &full_values);
+
             accessor
                 .table_insert(txn, table.oid, tuple_bytes)
                 .await
@@ -1046,38 +1060,45 @@ fn execute_update<'a, A: Accessor>(
         let layout = TupleLayout::from(table_columns.to_vec());
         let mut count = 0u64;
 
+        // 1. Sort columns by position to guarantee perfect alignment
+        let mut sorted_cols = table_columns.to_vec();
+        sorted_cols.sort_by_key(|c| c.position);
+
+        let col_names: Vec<&str> = sorted_cols.iter().map(|c| c.name.as_ref()).collect();
+
         for row in rows {
             let rid = row.rid.ok_or_else(|| {
                 DbError::Internal("Update requires tuple with RID from table scan".to_string())
             })?;
 
-            // MVCC update: delete old tuple, insert new tuple
-            // 1. Delete the old tuple
+            // MVCC update: delete old tuple
             accessor
                 .table_delete(txn, table.oid, rid)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
-            // 2. Build the new tuple with updated values
-            let mut new_values = row.values.clone();
+            // 2. Rebuild the values array in strictly position-sorted order
+            let mut new_values = vec![Value::Null; sorted_cols.len()];
 
+            // Carry over old values safely by position
+            for col in &sorted_cols {
+                let pos = col.position as usize;
+                if pos < row.values.len() {
+                    new_values[pos] = row.values[pos].clone();
+                }
+            }
+
+            // 3. Apply updates
             for assignment in assignments {
-                // Evaluate the new value using the old tuple for column references
                 let new_value = evaluate_expr(&assignment.value, &row)?;
-                // Find the position of the column being updated
                 let col_pos = assignment.column.position as usize;
                 if col_pos < new_values.len() {
                     new_values[col_pos] = new_value;
                 }
             }
 
-            // 3. Serialize and insert the new tuple
-            let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
-            for (idx, col) in table_columns.iter().enumerate() {
-                if let Some(val) = new_values.get(idx) {
-                    layout.write_field(&col.name, col.position as usize, &mut tuple_bytes, val);
-                }
-            }
+            // 4. Safe encoding
+            let tuple_bytes = layout.encode_tuple(&col_names, &new_values);
 
             accessor
                 .table_insert(txn, table.oid, tuple_bytes)

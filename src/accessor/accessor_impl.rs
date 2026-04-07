@@ -311,25 +311,15 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             // Insert into sys_tables
             let sys_tables_layout =
                 crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_TABLES_TABLE.to_vec());
-            let mut tuple_bytes = vec![0u8; sys_tables_layout.fixed_len as usize];
-            sys_tables_layout.write_field(
-                "oid",
-                0,
-                &mut tuple_bytes,
-                &crate::databox::Value::U32(table_oid),
-            );
-            sys_tables_layout.write_field(
-                "name",
-                1,
-                &mut tuple_bytes,
-                &crate::databox::Value::String(table_name),
-            );
-            sys_tables_layout.write_field(
-                "file_id",
-                2,
-                &mut tuple_bytes,
-                &crate::databox::Value::U32(file_id),
-            );
+
+            let sys_tables_cols = ["oid", "name", "file_id"];
+            let sys_tables_vals = [
+                crate::databox::Value::U32(table_oid),
+                crate::databox::Value::String(table_name),
+                crate::databox::Value::U32(file_id),
+            ];
+
+            let mut tuple_bytes = sys_tables_layout.encode_tuple(&sys_tables_cols, &sys_tables_vals);
 
             heap::insert(
                 &*self.bp,
@@ -343,44 +333,19 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             let sys_columns_layout =
                 crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
 
+            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+
             for (col_oid, col_table_oid, col_name, col_type, col_pos, col_null) in columns_data {
-                let mut col_bytes = vec![0u8; sys_columns_layout.fixed_len as usize];
-                sys_columns_layout.write_field(
-                    "oid",
-                    0,
-                    &mut col_bytes,
-                    &crate::databox::Value::U32(col_oid),
-                );
-                sys_columns_layout.write_field(
-                    "table_oid",
-                    1,
-                    &mut col_bytes,
-                    &crate::databox::Value::U32(col_table_oid),
-                );
-                sys_columns_layout.write_field(
-                    "name",
-                    2,
-                    &mut col_bytes,
-                    &crate::databox::Value::String(col_name),
-                );
-                sys_columns_layout.write_field(
-                    "type_id",
-                    3,
-                    &mut col_bytes,
-                    &crate::databox::Value::U8(col_type),
-                );
-                sys_columns_layout.write_field(
-                    "position",
-                    4,
-                    &mut col_bytes,
-                    &crate::databox::Value::U16(col_pos),
-                );
-                sys_columns_layout.write_field(
-                    "nullable",
-                    5,
-                    &mut col_bytes,
-                    &crate::databox::Value::Bool(col_null),
-                );
+                let col_vals = [
+                    crate::databox::Value::U32(col_oid),
+                    crate::databox::Value::U32(col_table_oid),
+                    crate::databox::Value::String(col_name),
+                    crate::databox::Value::U8(col_type),
+                    crate::databox::Value::U16(col_pos),
+                    crate::databox::Value::Bool(col_null),
+                ];
+
+                let col_bytes = sys_columns_layout.encode_tuple(&sys_columns_cols, &col_vals);
 
                 heap::insert(
                     &*self.bp,
