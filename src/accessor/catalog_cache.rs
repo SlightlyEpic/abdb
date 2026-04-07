@@ -90,6 +90,26 @@ impl CatalogCache {
         Ok(())
     }
 
+    /// Drop a table from the cache. Returns the removed Table if present.
+    pub fn deregister_table(&mut self, oid: OId) -> Option<Table> {
+        let table = self.tables.remove(&oid)?;
+        self.tables_by_name.remove(&*table.name);
+        self.columns.remove(&oid);
+        Some(table)
+    }
+
+    /// Drop an index from the cache. Returns the removed Index if present.
+    pub fn deregister_index(&mut self, oid: OId) -> Option<Index> {
+        let index = self.indexes.remove(&oid)?;
+        self.indexes_by_name.remove(&*index.name);
+        Some(index)
+    }
+
+    /// True if any registered index points at the given table_oid.
+    pub fn has_index_for_table(&self, table_oid: OId) -> bool {
+        self.indexes.values().any(|i| i.table_oid == table_oid)
+    }
+
     // ========================================================================
     // LOOKUP
     // ========================================================================

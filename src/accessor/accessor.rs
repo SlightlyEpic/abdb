@@ -1,7 +1,7 @@
 use futures::Stream;
 
 use crate::{
-    buffer, catalog,
+    buffer, catalog, databox,
     common::{aliases, txn::Txn},
 };
 
@@ -99,4 +99,56 @@ pub trait Accessor: Send + Sync {
         txn: Txn,
         table_oid: aliases::OId,
     ) -> Result<Vec<catalog::Column>>;
+
+    // -- DDL ----------------------------------------------------------------
+
+    /// Definition of a single column for `create_table`.
+    /// Mirrored as a free type below for ergonomics.
+
+    /// Create a new table: allocates oids/file id, creates the heap file on
+    /// disk, initializes its header page, registers it in the catalog cache,
+    /// and persists rows into `sys_tables` and `sys_columns` so the table
+    /// survives a restart (assuming a future bootstrap loader).
+    fn create_table(
+        &self,
+        txn: Txn,
+        name: String,
+        columns: Vec<NewColumn>,
+    ) -> impl Future<Output = Result<catalog::Table>> + '_ + Send;
+
+    /// Drop a table: refuses if any registered index targets it, deletes
+    /// the catalog rows from sys_tables/sys_columns, deregisters the cache
+    /// entry, and removes the heap file from disk.
+    fn drop_table(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    /// Create an index over (table_oid, column_oid): allocates an oid and
+    /// file id, creates the index file on disk, initializes its header page,
+    /// registers in the cache, and persists a row into `sys_indexes`.
+    fn create_index(
+        &self,
+        txn: Txn,
+        name: String,
+        table_oid: aliases::OId,
+        column_oid: aliases::OId,
+    ) -> impl Future<Output = Result<catalog::Index>> + '_ + Send;
+
+    /// Drop an index: deletes its row from sys_indexes, deregisters the
+    /// cache entry, and removes the index file from disk.
+    fn drop_index(
+        &self,
+        txn: Txn,
+        index_oid: aliases::OId,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
+}
+
+/// Column specification for `create_table`.
+#[derive(Clone, Debug)]
+pub struct NewColumn {
+    pub name: String,
+    pub type_id: databox::DataType,
+    pub nullable: bool,
 }

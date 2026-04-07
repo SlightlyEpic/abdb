@@ -40,7 +40,7 @@ impl TcpServer {
             disk_manager,
             eviction_policy,
         ));
-        let accessor = AccessorImpl::new(buffer_pool);
+        let accessor = AccessorImpl::new(buffer_pool, config.data_dir.clone());
 
         Self {
             config,

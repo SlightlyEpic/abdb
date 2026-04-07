@@ -191,8 +191,8 @@ Disk (files: .heap, .idx, .dir)
 - [x] `split_inner` — inner page split with separator push-up
 - [x] `insert_into_ancestors` — cascading split propagation
 - [x] Leaf merge on delete (`try_merge_leaf`, `find_merge_candidate`)
-- [?] Inner page merge cascading (currently only leaf merges are performed)
-- [ ] [what is this] B-Tree bulk loading
+- [x] Inner page merge cascading (`cascade_merge_inner` walks ancestors)
+- [ ] B-Tree bulk loading (sorted-input fast build path; not yet implemented)
 
 ### MVCC Visibility
 
@@ -223,8 +223,9 @@ Disk (files: .heap, .idx, .dir)
 - [x] DDL ops — `drop_table` (deregister from catalog, check for active indexes)
 - [x] DDL ops — `create_index` (init index file header, register in catalog cache)
 - [x] DDL ops — `drop_index` (deregister from catalog cache)
-- [ ] [IMPORTANT] DDL: system table persistence (insert into sys_tables/sys_columns/sys_indexes — deferred to DB bootstrap)
-- [ ] DDL: physical page deallocation on drop (requires storage layer file-level API)
+- [x] DDL: `create_table` / `drop_table` / `create_index` / `drop_index` on `Accessor` trait
+- [x] DDL: system table persistence (sys_tables / sys_columns / sys_indexes inserts + deletes)
+- [x] DDL: physical file removal on drop (heap/index `.heap`/`.idx` files removed via `std::fs`; page-directory entries leaked — see limits)
 
 ---
 

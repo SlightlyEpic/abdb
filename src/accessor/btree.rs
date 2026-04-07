@@ -927,6 +927,153 @@ async fn try_merge_leaf<B: BufferPool>(
             set_root_page(bp, file_id, new_root).await?;
             return Ok(());
         }
+        return Ok(());
+    }
+
+    // Parent (an inner page) may now be underfull after losing a separator.
+    // Cascade the merge upward through the ancestors.
+    let parent_underfull = {
+        let parent_page = BTreeInnerPage::new(&*parent_guard);
+        parent_page.can_merge()
+    };
+    drop(parent_guard);
+
+    if parent_underfull {
+        // path = [root, ..., parent_of_leaf]; ancestors of parent_of_leaf:
+        let ancestors = &path[..path.len() - 1];
+        cascade_merge_inner(bp, file_id, parent_num, ancestors, root_page).await?;
+    }
+
+    Ok(())
+}
+
+// ============================================================================
+// INNER PAGE MERGE (cascading)
+// ============================================================================
+
+/// Walk up the ancestor path merging underfull inner pages with a sibling.
+///
+/// Each level: write-latch the grandparent, locate a sibling under it,
+/// pull the separator key down into the survivor, append the removed
+/// page's leftmost child + separators, then delete the separator from
+/// the grandparent. If the grandparent is the root and becomes empty,
+/// the tree shrinks. Otherwise, if the grandparent itself is now
+/// underfull, the loop ascends.
+async fn cascade_merge_inner<B: BufferPool>(
+    bp: &'_ B,
+    file_id: FileId,
+    mut current: LPageId,
+    mut ancestors: &[LPageId],
+    root_page: LPageId,
+) -> Result<()> {
+    while let Some((&grand_num, rest)) = ancestors.split_last() {
+        // Latch grandparent first to stabilize the parent→child relationship.
+        let mut grand_guard = bp
+            .fetch_page_write(grand_num)
+            .await
+            .map_err(Error::BufferError)?;
+
+        // Re-check that `current` is still underfull under the grandparent latch.
+        let cur_check = bp
+            .fetch_page_read(current)
+            .await
+            .map_err(Error::BufferError)?;
+        let still_underfull = BTreeInnerPage::new(&*cur_check).can_merge();
+        drop(cur_check);
+        if !still_underfull {
+            return Ok(());
+        }
+
+        let merge_info = match find_merge_candidate(&*grand_guard, current) {
+            Some(info) => info,
+            None => return Ok(()),
+        };
+
+        // Pull the separator key sitting between survivor and removed in grand.
+        let sep_key = {
+            let grand_page = BTreeInnerPage::new(&*grand_guard);
+            grand_page
+                .entry(merge_info.sep_idx)
+                .map_err(|e| Error::PageCorruption(format!("inner merge read sep: {:?}", e)))?
+                .separator_key
+        };
+
+        let mut surv_guard = bp
+            .fetch_page_write(merge_info.survivor)
+            .await
+            .map_err(Error::BufferError)?;
+        let removed_guard = bp
+            .fetch_page_write(merge_info.removed)
+            .await
+            .map_err(Error::BufferError)?;
+
+        let surv_n = BTreeInnerPage::new(&*surv_guard).num_keys();
+        let rem_page = BTreeInnerPage::new(&*removed_guard);
+        let rem_n = rem_page.num_keys();
+
+        // Combined size = surv keys + 1 (pulled separator) + removed keys.
+        if (surv_n as usize) + 1 + (rem_n as usize) > INNER_MAX_KEYS as usize {
+            return Ok(());
+        }
+
+        // Snapshot removed page contents before dropping its latch.
+        let rem_leftmost = rem_page.leftmost_child();
+        let mut rem_entries: Vec<BTreeInnerEntry> = Vec::with_capacity(rem_n as usize);
+        for i in 0..rem_n {
+            rem_entries.push(
+                rem_page
+                    .entry(i)
+                    .map_err(|e| Error::PageCorruption(format!("inner merge read rem: {:?}", e)))?,
+            );
+        }
+        drop(removed_guard);
+
+        // Append (sep_key, rem_leftmost) and removed's separators into survivor.
+        // All these keys are strictly greater than every existing survivor key
+        // (B-Tree ordering invariant), so insert_separator places them at the end.
+        {
+            let mut surv_page = BTreeInnerPage::new(&mut *surv_guard);
+            surv_page
+                .insert_separator(sep_key, rem_leftmost)
+                .map_err(|e| Error::PageCorruption(format!("inner merge ins pull: {:?}", e)))?;
+            for e in &rem_entries {
+                surv_page
+                    .insert_separator(e.separator_key, e.right_child)
+                    .map_err(|e| Error::PageCorruption(format!("inner merge ins: {:?}", e)))?;
+            }
+        }
+        surv_guard.mark_dirty().map_err(Error::BufferError)?;
+        drop(surv_guard);
+
+        // Remove the separator from the grandparent (also drops removed's pointer).
+        {
+            let mut grand_page = BTreeInnerPage::new(&mut *grand_guard);
+            grand_page
+                .delete_separator(merge_info.sep_idx)
+                .map_err(|e| Error::PageCorruption(format!("inner merge del sep: {:?}", e)))?;
+        }
+        grand_guard.mark_dirty().map_err(Error::BufferError)?;
+
+        // Root shrink: if grandparent is the root and is now empty, promote
+        // its sole remaining child (leftmost_child) as the new root.
+        if grand_num == root_page {
+            let grand_page = BTreeInnerPage::new(&*grand_guard);
+            if grand_page.num_keys() == 0 {
+                let new_root = grand_page.leftmost_child();
+                drop(grand_guard);
+                set_root_page(bp, file_id, new_root).await?;
+            }
+            return Ok(());
+        }
+
+        // Ascend if grandparent is itself now underfull.
+        let grand_underfull = BTreeInnerPage::new(&*grand_guard).can_merge();
+        drop(grand_guard);
+        if !grand_underfull {
+            return Ok(());
+        }
+        current = grand_num;
+        ancestors = rest;
     }
 
     Ok(())
