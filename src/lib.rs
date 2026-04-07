@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod common;
 pub mod databox;
 pub mod error;
+pub mod executor;
 pub mod optimizer;
 pub mod page;
 pub mod parser;

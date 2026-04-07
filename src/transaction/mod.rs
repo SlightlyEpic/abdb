@@ -1,6 +1,6 @@
-// visibility.rs should be moved here i guess
-
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::RwLock;
 
 use crate::error::Result;
 
@@ -68,6 +68,8 @@ impl Transaction {
 pub struct TransactionManager {
     next_txn_id: AtomicU64,
     current_ts: AtomicU64,
+    /// Set of currently active transaction IDs.
+    active_txns: RwLock<HashSet<TxnId>>,
 }
 
 impl TransactionManager {
@@ -75,12 +77,20 @@ impl TransactionManager {
         Self {
             next_txn_id: AtomicU64::new(1),
             current_ts: AtomicU64::new(0),
+            active_txns: RwLock::new(HashSet::new()),
         }
     }
 
     pub fn begin(&self, isolation_level: IsolationLevel) -> Transaction {
         let txn_id = self.next_txn_id.fetch_add(1, Ordering::SeqCst);
         let read_ts = self.current_ts.load(Ordering::SeqCst);
+
+        // Add to active transactions
+        {
+            let mut active = self.active_txns.write().expect("active_txns lock poisoned");
+            active.insert(txn_id);
+        }
+
         println!(
             "[txn] begin txn_id={} read_ts={} isolation={}",
             txn_id,
@@ -94,11 +104,77 @@ impl TransactionManager {
         self.current_ts.load(Ordering::SeqCst)
     }
 
-    pub fn commit(&self, _txn: &mut Transaction) -> Result<()> {
-        todo!();
+    /// Commit a transaction.
+    ///
+    /// Assigns a commit timestamp and marks the transaction as committed.
+    /// The commit timestamp is used for visibility: tuples created by this
+    /// transaction become visible to transactions that start after this commit.
+    pub fn commit(&self, txn: &mut Transaction) -> Result<()> {
+        if txn.state != TxnState::Active {
+            return Err(crate::error::DbError::InvalidTransactionState(format!(
+                "Cannot commit transaction in state {:?}",
+                txn.state
+            )));
+        }
+
+        // Assign commit timestamp and advance global clock
+        let commit_ts = self.current_ts.fetch_add(1, Ordering::SeqCst) + 1;
+        txn.commit_ts = Some(commit_ts);
+        txn.state = TxnState::Committed;
+
+        // Remove from active transactions
+        {
+            let mut active = self.active_txns.write().expect("active_txns lock poisoned");
+            active.remove(&txn.txn_id);
+        }
+
+        println!(
+            "[txn] commit txn_id={} commit_ts={}",
+            txn.txn_id, commit_ts
+        );
+
+        Ok(())
     }
 
-    pub fn rollback(&self, _txn: &mut Transaction) -> Result<()> {
-        todo!();
+    /// Abort/rollback a transaction.
+    ///
+    /// Marks the transaction as aborted. Any tuples created by this transaction
+    /// should not be visible to other transactions.
+    ///
+    /// Note: In a full implementation, this would also need to undo any writes
+    /// made by the transaction (either via undo logs or by marking tuples with
+    /// XMAX). For now, we just mark the state.
+    pub fn rollback(&self, txn: &mut Transaction) -> Result<()> {
+        if txn.state != TxnState::Active {
+            return Err(crate::error::DbError::InvalidTransactionState(format!(
+                "Cannot rollback transaction in state {:?}",
+                txn.state
+            )));
+        }
+
+        txn.state = TxnState::Aborted;
+
+        // Remove from active transactions
+        {
+            let mut active = self.active_txns.write().expect("active_txns lock poisoned");
+            active.remove(&txn.txn_id);
+        }
+
+        println!("[txn] rollback txn_id={}", txn.txn_id);
+
+        Ok(())
+    }
+
+    /// Check if a transaction is currently active.
+    pub fn is_active(&self, txn_id: TxnId) -> bool {
+        let active = self.active_txns.read().expect("active_txns lock poisoned");
+        active.contains(&txn_id)
+    }
+
+    /// Get the set of currently active transaction IDs.
+    /// Used for snapshot isolation to determine visibility.
+    pub fn active_transaction_ids(&self) -> HashSet<TxnId> {
+        let active = self.active_txns.read().expect("active_txns lock poisoned");
+        active.clone()
     }
 }
