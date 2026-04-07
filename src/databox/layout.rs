@@ -182,6 +182,62 @@ impl TupleLayout {
         }
         true
     }
+
+    pub fn encode_tuple(
+        &self,
+        columns: &[&str],
+        values: &[Value],
+    ) -> Vec<u8> {
+        assert_eq!(columns.len(), values.len(), "Columns and values must match");
+
+        let mut heap_size = 0;
+        for val in values {
+            if let Value::String(s) = val {
+                heap_size += s.len();
+            }
+        }
+
+        let total_size = self.fixed_len as usize + heap_size;
+        let mut tuple = vec![0u8; total_size];
+
+        let mut current_heap_offset = self.fixed_len as usize;
+
+        for (col_index, (&col_name, val)) in columns.iter().zip(values.iter()).enumerate() {
+            if val.is_null() {
+                self.write_field(col_name, col_index, &mut tuple, val);
+                continue;
+            }
+
+            match val {
+                Value::String(s) => {
+                    let len = s.len();
+                    let bytes = s.as_bytes();
+                    
+                    tuple[current_heap_offset..current_heap_offset + len]
+                        .copy_from_slice(bytes);
+
+                    let fixed_offset = *self.offsets.get(col_name).unwrap() as usize;
+                    let len_bytes = (len as u16).to_le_bytes();
+                    let off_bytes = (current_heap_offset as u16).to_le_bytes();
+                    
+                    tuple[fixed_offset..fixed_offset + 2].copy_from_slice(&len_bytes);
+                    tuple[fixed_offset + 2..fixed_offset + 4].copy_from_slice(&off_bytes);
+
+                    let bitmap_start = self.null_bitmap_offset as usize;
+                    let byte_idx = bitmap_start + (col_index / 8);
+                    let bit_mask = 1u8 << (col_index % 8);
+                    tuple[byte_idx] &= !bit_mask;
+
+                    current_heap_offset += len;
+                }
+                _ => {
+                    self.write_field(col_name, col_index, &mut tuple, val);
+                }
+            }
+        }
+
+        tuple
+    }
 }
 
 /// Read exactly N bytes from `data` at `offset`, returning None if out of bounds.

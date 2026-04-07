@@ -123,7 +123,7 @@ impl TcpServer {
 
                             // 4. Send to your database engine
                             let result = format!(
-                                "\n{}\n\nabdb>", 
+                                "\n{}\n\nabdb> ", 
                                 match session.execute_sql(sql).await {
                                     Ok(res) => res,
                                     Err(e) => e.to_string(),

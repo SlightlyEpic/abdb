@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// Marker file to indicate a database has been initialized.
-const DB_MARKER_FILE: &str = ".abdb_initialized";
+const DB_MARKER_FILE: &str = ".abdb_init_marker";
 
 /// Check if a database exists at the given path.
 pub fn database_exists(path: &Path) -> bool {
@@ -144,14 +144,14 @@ async fn insert_sys_table_record<B: BufferPool>(
     // sys_tables schema: oid (U32), name (String), file_id (U32)
     let layout = TupleLayout::from(schema::SYS_COLUMNS_TABLES_TABLE.to_vec());
 
-    let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
+    let cols = ["oid", "name", "file_id"];
+    let vals = [
+        Value::U32(table.oid),
+        Value::String(table.name.to_string()),
+        Value::U32(table.file_id),
+    ];
 
-    // Write oid
-    layout.write_field("oid", 0, &mut tuple_bytes, &Value::U32(table.oid));
-    // Write name
-    layout.write_field("name", 1, &mut tuple_bytes, &Value::String(table.name.to_string()));
-    // Write file_id
-    layout.write_field("file_id", 2, &mut tuple_bytes, &Value::U32(table.file_id));
+    let tuple_bytes = layout.encode_tuple(&cols, &vals);
 
     heap::insert(bp, constants::SYS_TABLE_TABLES_FID, txn, &tuple_bytes)
         .await
@@ -169,14 +169,17 @@ async fn insert_sys_column_record<B: BufferPool>(
     // sys_columns schema: oid, table_oid, name, type_id, position, nullable
     let layout = TupleLayout::from(schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
 
-    let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
+    let cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+    let vals = [
+        Value::U32(column.oid),
+        Value::U32(column.table_oid),
+        Value::String(column.name.to_string()),
+        Value::U8(column.type_id as u8),
+        Value::U16(column.position),
+        Value::Bool(column.nullable),
+    ];
 
-    layout.write_field("oid", 0, &mut tuple_bytes, &Value::U32(column.oid));
-    layout.write_field("table_oid", 1, &mut tuple_bytes, &Value::U32(column.table_oid));
-    layout.write_field("name", 2, &mut tuple_bytes, &Value::String(column.name.to_string()));
-    layout.write_field("type_id", 3, &mut tuple_bytes, &Value::U8(column.type_id as u8));
-    layout.write_field("position", 4, &mut tuple_bytes, &Value::U16(column.position));
-    layout.write_field("nullable", 5, &mut tuple_bytes, &Value::Bool(column.nullable));
+    let tuple_bytes = layout.encode_tuple(&cols, &vals);
 
     heap::insert(bp, constants::SYS_TABLE_COLUMNS_FID, txn, &tuple_bytes)
         .await
@@ -398,13 +401,16 @@ pub async fn persist_create_index<B: BufferPool>(
     // sys_indexes schema: oid, name, table_oid, column_oid, file_id
     let layout = TupleLayout::from(schema::SYS_COLUMNS_INDEXES_TABLE.to_vec());
 
-    let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
+    let cols = ["oid", "name", "table_oid", "column_oid", "file_id"];
+    let vals = [
+        Value::U32(index.oid),
+        Value::String(index.name.to_string()),
+        Value::U32(index.table_oid),
+        Value::U32(index.column_oid),
+        Value::U32(index.file_id),
+    ];
 
-    layout.write_field("oid", 0, &mut tuple_bytes, &Value::U32(index.oid));
-    layout.write_field("name", 1, &mut tuple_bytes, &Value::String(index.name.to_string()));
-    layout.write_field("table_oid", 2, &mut tuple_bytes, &Value::U32(index.table_oid));
-    layout.write_field("column_oid", 3, &mut tuple_bytes, &Value::U32(index.column_oid));
-    layout.write_field("file_id", 4, &mut tuple_bytes, &Value::U32(index.file_id));
+    let tuple_bytes = layout.encode_tuple(&cols, &vals);
 
     heap::insert(bp, constants::SYS_TABLE_INDEXES_FID, txn, &tuple_bytes)
         .await
