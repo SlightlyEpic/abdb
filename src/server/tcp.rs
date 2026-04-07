@@ -112,10 +112,11 @@ impl TcpServer {
                             println!("Executing: {}", sql);
 
                             // 4. Send to your database engine
-                            let result = match session.execute_sql(sql).await {
+                            let mut result = match session.execute_sql(sql).await {
                                 Ok(res) => res,
                                 Err(e) => e.to_string(),
                             };
+                            result.push('\n');
 
                             // 5. Send the result back to the client
                             if writer.write_all(result.as_bytes()).await.is_err() {
