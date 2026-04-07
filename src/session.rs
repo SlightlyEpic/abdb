@@ -74,75 +74,81 @@ impl Session {
         }
     }
 
-    pub fn execute_sql(&mut self, sql: &str) -> Result<String> {
-        let ast = parser::Parser::parse(sql)?;
+    pub fn execute_sql<'a>(
+        &'a mut self,
+        sql: &'a str,
+    ) -> impl std::future::Future<Output = Result<String>> + 'a {
+        async move {
+            let ast = parser::Parser::parse(sql)?;
 
-        let stmt = match ast.as_slice() {
-            [stmt] => stmt.to_owned(),
-            [] => return Err(DbError::EmptyStatement),
-            _ => return Err(DbError::TooManyStatements),
-        };
+            let stmt = match ast.as_slice() {
+                [stmt] => stmt.to_owned(),
+                [] => return Err(DbError::EmptyStatement),
+                _ => return Err(DbError::TooManyStatements),
+            };
 
-        use parser::ast::*;
+            use parser::ast::*;
 
-        match stmt {
-            Statement::BeginTransaction(isolation_level) => {
-                if self.current_txn.is_some() {
-                    Err(DbError::TransactionAlreadyInProgress)
-                } else {
-                    self.current_txn = Some(self.txn_manager.begin(isolation_level));
-                    Ok("BEGIN".into())
+            match stmt {
+                Statement::BeginTransaction(isolation_level) => {
+                    if self.current_txn.is_some() {
+                        Err(DbError::TransactionAlreadyInProgress)
+                    } else {
+                        self.current_txn = Some(self.txn_manager.begin(isolation_level));
+                        Ok("BEGIN".into())
+                    }
                 }
-            }
-            Statement::Commit => {
-                let current_txn = self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
-                self.txn_manager.commit(current_txn)?;
-                self.current_txn = None;
-                Ok("COMMIT".into())
-            }
-            Statement::Rollback => {
-                let current_txn = self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
-                self.txn_manager.rollback(current_txn)?;
-                self.current_txn = None;
-                Ok("ROLLBACK".into())
-            }
-            other => {
-                // Use tokio runtime to execute async code
-                let rt = tokio::runtime::Handle::try_current()
-                    .unwrap_or_else(|_| {
-                        tokio::runtime::Runtime::new().unwrap().handle().clone()
-                    });
-                rt.block_on(self.execute_sql_in_txn(other))
+                Statement::Commit => {
+                    let current_txn =
+                        self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
+                    self.txn_manager.commit(current_txn)?;
+                    self.current_txn = None;
+                    Ok("COMMIT".into())
+                }
+                Statement::Rollback => {
+                    let current_txn =
+                        self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
+                    self.txn_manager.rollback(current_txn)?;
+                    self.current_txn = None;
+                    Ok("ROLLBACK".into())
+                }
+                other => self.execute_sql_in_txn(other).await,
             }
         }
     }
 
-    async fn execute_sql_in_txn(&mut self, stmt: Statement) -> Result<String> {
-        // Get or create transaction
-        let txn = self.get_or_begin_txn();
+    fn execute_sql_in_txn(
+        &mut self,
+        stmt: Statement,
+    ) -> impl std::future::Future<Output = Result<String>> + '_ {
+        async move {
+            // Get or create transaction
+            let txn = self.get_or_begin_txn();
 
-        // 1. Bind
-        let binder = Binder::new(
-            Arc::clone(&self.accessor),
-            Arc::clone(&self.oid_allocator),
-            txn,
-        );
-        let bound = binder.bind(stmt)?;
+            // 1. Bind
+            let binder = Binder::new(
+                Arc::clone(&self.accessor),
+                Arc::clone(&self.oid_allocator),
+                txn,
+            );
+            let bound = binder.bind(stmt)?;
 
-        // 2. Plan
-        let plan = Planner::plan(bound).map_err(|e| DbError::PlanError(format!("{:?}", e)))?;
+            // 2. Plan
+            let plan =
+                Planner::plan(bound).map_err(|e| DbError::PlanError(format!("{:?}", e)))?;
 
-        // 3. Optimize
-        let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn);
-        let physical = optimizer
-            .optimize(plan)
-            .map_err(|e| DbError::OptimizerError(format!("{:?}", e)))?;
+            // 3. Optimize
+            let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn);
+            let physical = optimizer
+                .optimize(plan)
+                .map_err(|e| DbError::OptimizerError(format!("{:?}", e)))?;
 
-        // 4. Execute
-        let result = executor::execute(physical, self.accessor.as_ref(), txn).await?;
+            // 4. Execute
+            let result = executor::execute(physical, self.accessor.as_ref(), txn).await?;
 
-        // Format result
-        Ok(format_result(result))
+            // Format result
+            Ok(format_result(result))
+        }
     }
 
     /// Get the current transaction's Txn struct, or begin an auto-commit transaction.

@@ -19,8 +19,8 @@ The database has solid foundations in the storage layer, buffer pool, accessor l
 | SQL Pipeline Integration | ✅ **IMPLEMENTED** | Done |
 | Database Bootstrap | 0% complete | **HIGH** |
 | DDL Persistence | Not started | **HIGH** |
-| Update/Delete actual implementation | Stubbed | **MEDIUM** |
-| Index Scan execution | Not started | **MEDIUM** |
+| Update/Delete actual implementation | ✅ **IMPLEMENTED** | Done |
+| Index Scan execution | ✅ **IMPLEMENTED** | Done |
 
 ---
 
@@ -131,9 +131,9 @@ Uses a **materialized execution** model where each operator produces a complete 
 | `TopN` | ✅ | Fused Sort+Limit |
 | `Distinct` | ✅ | DISTINCT |
 | `Insert` | ✅ | INSERT via accessor |
-| `Update` | ⚠️ Stub | Returns row count but doesn't modify |
-| `Delete` | ⚠️ Stub | Returns row count but doesn't modify |
-| `IndexScan` | ⚠️ Stub | Returns empty result |
+| `Update` | ✅ | MVCC update (delete + insert) via accessor |
+| `Delete` | ✅ | Delete via accessor.table_delete() |
+| `IndexScan` | ✅ | Index scan via accessor + table fetch |
 | DDL (Create/Drop/Alter) | ✅ | Returns success message |
 
 ---
@@ -360,46 +360,17 @@ pub async fn create_table(&self, name: &str, columns: &[ColumnDef], txn: &Txn) -
 
 ---
 
-## 7. SQL Pipeline Integration (MEDIUM)
+## 7. SQL Pipeline Integration ✅ IMPLEMENTED
 
-**File**: `src/session.rs:85-88`
+**File**: `src/session.rs`
 
-### Current State
-```rust
-pub fn execute_sql_in_txn(&mut self, stmt: Statement) -> Result<String> {
-    Ok("".into())  // STUBBED
-}
-```
+### What's Implemented
 
-### What's Needed
-
-```rust
-pub async fn execute_sql_in_txn(&mut self, stmt: Statement) -> Result<String> {
-    // Ensure we have a transaction (auto-begin if needed)
-    let txn = self.current_txn.get_or_insert_with(|| {
-        self.txn_manager.begin(self.session_isolation_level)
-    });
-
-    // 1. Bind
-    let binder = Binder::new(&self.accessor);
-    let bound = binder.bind_statement(stmt)?;
-
-    // 2. Plan
-    let planner = Planner::new(&self.accessor);
-    let plan = planner.plan(bound)?;
-
-    // 3. Optimize
-    let optimizer = Optimizer::new();
-    let optimized = optimizer.optimize(plan);
-
-    // 4. Execute
-    let mut executor = build_executor(optimized, &self.accessor, txn)?;
-    let results = collect_results(&mut executor).await?;
-
-    // 5. Format and return
-    format_results(results)
-}
-```
+The full SQL pipeline is now wired up in `execute_sql_in_txn`:
+- Parse SQL → Bind → Plan → Optimize → Execute → Format result
+- Transaction handling for BEGIN/COMMIT/ROLLBACK statements
+- Auto-commit mode for standalone queries
+- Proper async/await support throughout
 
 ---
 

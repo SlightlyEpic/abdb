@@ -7,13 +7,14 @@ use futures::{FutureExt, StreamExt};
 
 use crate::{
     accessor::Accessor,
-    binder::{BoundExpr, BoundJoinCondition, BoundJoinKind, FunctionKind},
+    binder::{BoundAssignment, BoundExpr, BoundJoinCondition, BoundJoinKind, FunctionKind},
     catalog,
     common::txn::Txn,
     databox::{TupleLayout, Value},
     error::{DbError, Result},
     optimizer::{
-        PhysAggregateExpr, PhysicalPlan, PhysInsert, PhysSeqScan, PhysSortKey, PhysValues,
+        PhysAggregateExpr, PhysicalPlan, PhysIndexScan, PhysInsert, PhysSeqScan, PhysSortKey,
+        PhysValues,
     },
     planner::Schema,
 };
@@ -310,11 +311,16 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Update(update) => {
+                let table = update.table.clone();
+                let table_columns = update.table_columns.clone();
+                let assignments = update.assignments.clone();
                 let source_result = execute(*update.input, accessor, txn).await?;
                 match source_result {
                     ExecutionResult::Rows { rows, .. } => {
-                        // TODO: Implement actual update
-                        Ok(ExecutionResult::RowsAffected(rows.len() as u64))
+                        let count =
+                            execute_update(rows, &table, &table_columns, &assignments, accessor, txn)
+                                .await?;
+                        Ok(ExecutionResult::RowsAffected(count))
                     }
                     _ => Err(DbError::Internal(
                         "Update source must produce rows".to_string(),
@@ -323,11 +329,12 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Delete(delete) => {
+                let table = delete.table.clone();
                 let source_result = execute(*delete.input, accessor, txn).await?;
                 match source_result {
                     ExecutionResult::Rows { rows, .. } => {
-                        // TODO: Implement actual delete
-                        Ok(ExecutionResult::RowsAffected(rows.len() as u64))
+                        let count = execute_delete(rows, &table, accessor, txn).await?;
+                        Ok(ExecutionResult::RowsAffected(count))
                     }
                     _ => Err(DbError::Internal(
                         "Delete source must produce rows".to_string(),
@@ -342,11 +349,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                     .iter()
                     .map(|c| c.name.clone())
                     .collect();
-                // TODO: Implement actual index scan
-                Ok(ExecutionResult::Rows {
-                    columns,
-                    rows: vec![],
-                })
+                let rows = execute_index_scan(&scan, accessor, txn).await?;
+                Ok(ExecutionResult::Rows { columns, rows })
             }
         }
     }
@@ -384,7 +388,7 @@ fn execute_seq_scan<'a, A: Accessor>(
 
         let mut rows = Vec::new();
         while let Some(result) = stream.next().await {
-            let (tuple_bytes, _rid) =
+            let (tuple_bytes, rid) =
                 result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
             // Deserialize tuple from bytes using layout
@@ -395,7 +399,8 @@ fn execute_seq_scan<'a, A: Accessor>(
                     .unwrap_or(Value::Null);
                 values.push(val);
             }
-            rows.push(Tuple::new(values));
+            // Store RID for Update/Delete operations
+            rows.push(Tuple::with_rid(values, rid));
         }
 
         // Apply pushed predicates if any
@@ -404,6 +409,78 @@ fn execute_seq_scan<'a, A: Accessor>(
                 .into_iter()
                 .filter(|tuple| {
                     scan.pushed_predicates
+                        .iter()
+                        .all(|pred| evaluate_predicate(pred, tuple).unwrap_or(false))
+                })
+                .collect();
+        }
+
+        Ok(rows)
+    }
+}
+
+fn execute_index_scan<'a, A: Accessor>(
+    scan: &'a PhysIndexScan,
+    accessor: &'a A,
+    txn: Txn,
+) -> impl Future<Output = Result<Vec<Tuple>>> + 'a {
+    async move {
+        let layout = TupleLayout::from(scan.columns.clone());
+        let empty_tuple = Tuple::empty();
+
+        // Evaluate start/end keys
+        let start_key = match &scan.start_key {
+            Some(expr) => {
+                let val = evaluate_expr(expr, &empty_tuple)?;
+                Some(val.to_bytes())
+            }
+            None => None,
+        };
+
+        let end_key = match &scan.end_key {
+            Some(expr) => {
+                let val = evaluate_expr(expr, &empty_tuple)?;
+                Some(val.to_bytes())
+            }
+            None => None,
+        };
+
+        // Scan the index
+        let stream = accessor
+            .index_scan(txn, scan.index.oid, start_key, end_key)
+            .await
+            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+        let mut stream = pin!(stream);
+        let mut rows = Vec::new();
+
+        while let Some(result) = stream.next().await {
+            let (_key_bytes, rid) =
+                result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+            // Fetch the tuple from the table using the RID
+            let tuple_bytes = accessor
+                .table_get(txn, scan.table.oid, rid)
+                .await
+                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+            // Deserialize tuple from bytes using layout
+            let mut values = Vec::with_capacity(scan.columns.len());
+            for (idx, col) in scan.columns.iter().enumerate() {
+                let val = layout
+                    .read_field(&col.name, idx, &tuple_bytes)
+                    .unwrap_or(Value::Null);
+                values.push(val);
+            }
+            rows.push(Tuple::with_rid(values, rid));
+        }
+
+        // Apply residual predicates if any
+        if !scan.residual_predicates.is_empty() {
+            rows = rows
+                .into_iter()
+                .filter(|tuple| {
+                    scan.residual_predicates
                         .iter()
                         .all(|pred| evaluate_predicate(pred, tuple).unwrap_or(false))
                 })
@@ -894,6 +971,89 @@ fn execute_insert<'a, A: Accessor>(
             }
 
             // Insert into table
+            accessor
+                .table_insert(txn, table.oid, tuple_bytes)
+                .await
+                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+            count += 1;
+        }
+
+        Ok(count)
+    }
+}
+
+fn execute_delete<'a, A: Accessor>(
+    rows: Vec<Tuple>,
+    table: &'a catalog::Table,
+    accessor: &'a A,
+    txn: Txn,
+) -> impl Future<Output = Result<u64>> + 'a {
+    async move {
+        let mut count = 0u64;
+
+        for row in rows {
+            let rid = row.rid.ok_or_else(|| {
+                DbError::Internal("Delete requires tuple with RID from table scan".to_string())
+            })?;
+
+            accessor
+                .table_delete(txn, table.oid, rid)
+                .await
+                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+            count += 1;
+        }
+
+        Ok(count)
+    }
+}
+
+fn execute_update<'a, A: Accessor>(
+    rows: Vec<Tuple>,
+    table: &'a catalog::Table,
+    table_columns: &'a [catalog::Column],
+    assignments: &'a [BoundAssignment],
+    accessor: &'a A,
+    txn: Txn,
+) -> impl Future<Output = Result<u64>> + 'a {
+    async move {
+        let layout = TupleLayout::from(table_columns.to_vec());
+        let mut count = 0u64;
+
+        for row in rows {
+            let rid = row.rid.ok_or_else(|| {
+                DbError::Internal("Update requires tuple with RID from table scan".to_string())
+            })?;
+
+            // MVCC update: delete old tuple, insert new tuple
+            // 1. Delete the old tuple
+            accessor
+                .table_delete(txn, table.oid, rid)
+                .await
+                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+            // 2. Build the new tuple with updated values
+            let mut new_values = row.values.clone();
+
+            for assignment in assignments {
+                // Evaluate the new value using the old tuple for column references
+                let new_value = evaluate_expr(&assignment.value, &row)?;
+                // Find the position of the column being updated
+                let col_pos = assignment.column.position as usize;
+                if col_pos < new_values.len() {
+                    new_values[col_pos] = new_value;
+                }
+            }
+
+            // 3. Serialize and insert the new tuple
+            let mut tuple_bytes = vec![0u8; layout.fixed_len as usize];
+            for (idx, col) in table_columns.iter().enumerate() {
+                if let Some(val) = new_values.get(idx) {
+                    layout.write_field(&col.name, col.position as usize, &mut tuple_bytes, val);
+                }
+            }
+
             accessor
                 .table_insert(txn, table.oid, tuple_bytes)
                 .await

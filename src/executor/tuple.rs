@@ -1,18 +1,31 @@
+use crate::common::aliases::RecordId;
 use crate::databox::Value;
 
 /// A row of values during query execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tuple {
     pub values: Vec<Value>,
+    /// Optional record ID for tuples from table scans (used by Update/Delete).
+    pub rid: Option<RecordId>,
 }
 
 impl Tuple {
     pub fn new(values: Vec<Value>) -> Self {
-        Self { values }
+        Self { values, rid: None }
+    }
+
+    pub fn with_rid(values: Vec<Value>, rid: RecordId) -> Self {
+        Self {
+            values,
+            rid: Some(rid),
+        }
     }
 
     pub fn empty() -> Self {
-        Self { values: vec![] }
+        Self {
+            values: vec![],
+            rid: None,
+        }
     }
 
     pub fn get(&self, idx: usize) -> Option<&Value> {
@@ -28,10 +41,11 @@ impl Tuple {
     }
 
     /// Concatenate two tuples (for joins).
+    /// Note: RID is not preserved in joined tuples.
     pub fn concat(&self, other: &Tuple) -> Tuple {
         let mut values = self.values.clone();
         values.extend(other.values.iter().cloned());
-        Tuple { values }
+        Tuple { values, rid: None }
     }
 }
 
