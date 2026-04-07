@@ -99,4 +99,12 @@ pub trait Accessor: Send + Sync {
         txn: Txn,
         table_oid: aliases::OId,
     ) -> Result<Vec<catalog::Column>>;
+
+    /// Create a new table by initializing its heap file and registering in catalog.
+    fn create_table(
+        &self,
+        txn: Txn,
+        table: catalog::Table,
+        columns: Vec<catalog::Column>,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
 }

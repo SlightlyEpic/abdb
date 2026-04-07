@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    accessor::{Accessor, Result},
+    accessor::{Accessor, Error, Result},
     btree,
     catalog_cache::CatalogCache,
     heap,
@@ -239,5 +239,159 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
     ) -> Result<Vec<catalog::Column>> {
         let cache = self.catalog.read().expect("catalog lock poisoned");
         cache.get_table_columns(table_oid)
+    }
+
+    // -- DDL operations --------------------------------------------------------
+
+    fn create_table(
+        &self,
+        txn: Txn,
+        table: catalog::Table,
+        columns: Vec<catalog::Column>,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            use crate::buffer::PageWriteGuard;
+            use crate::common::constants::PAGE_BUF_SIZE;
+            use crate::page::overlays::file_header::HeapFileHeaderPage;
+
+            let file_id = table.file_id;
+            let table_oid = table.oid;
+
+            // 1. Initialize the heap file header at offset 0
+            let header_loc = aliases::PPageId {
+                file: file_id,
+                offset: 0,
+            };
+
+            let mut guard = self
+                .bp
+                .fetch_page_at_loc_write(header_loc)
+                .await
+                .map_err(Error::BufferError)?;
+
+            // Initialize the header page
+            let buffer = &mut *guard;
+            buffer.fill(0);
+
+            let temp_buffer = HeapFileHeaderPage::init(
+                [0u8; PAGE_BUF_SIZE],
+                0,
+                table_oid,
+            );
+            buffer.copy_from_slice(temp_buffer.as_buffer());
+
+            guard.mark_dirty().map_err(Error::BufferError)?;
+            drop(guard);
+
+            // 2. Register in catalog cache
+            self.register_table(table, columns)?;
+
+            // 3. Persist to system tables
+            // Extract data from cache before any awaits (RwLockGuard is not Send)
+            let (table_name, columns_data): (String, Vec<(u32, u32, String, u8, u16, bool)>) = {
+                let cache = self.catalog.read().expect("catalog lock poisoned");
+                let table_info = cache.get_table_by_oid(table_oid)?;
+                let columns = cache.get_table_columns(table_oid)?;
+                let cols_data = columns
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.oid,
+                            c.table_oid,
+                            c.name.to_string(),
+                            c.type_id as u8,
+                            c.position,
+                            c.nullable,
+                        )
+                    })
+                    .collect();
+                (table_info.name.to_string(), cols_data)
+            };
+
+            // Insert into sys_tables
+            let sys_tables_layout =
+                crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_TABLES_TABLE.to_vec());
+            let mut tuple_bytes = vec![0u8; sys_tables_layout.fixed_len as usize];
+            sys_tables_layout.write_field(
+                "oid",
+                0,
+                &mut tuple_bytes,
+                &crate::databox::Value::U32(table_oid),
+            );
+            sys_tables_layout.write_field(
+                "name",
+                1,
+                &mut tuple_bytes,
+                &crate::databox::Value::String(table_name),
+            );
+            sys_tables_layout.write_field(
+                "file_id",
+                2,
+                &mut tuple_bytes,
+                &crate::databox::Value::U32(file_id),
+            );
+
+            heap::insert(
+                &*self.bp,
+                crate::common::constants::SYS_TABLE_TABLES_FID,
+                &txn,
+                &tuple_bytes,
+            )
+            .await?;
+
+            // Insert columns into sys_columns
+            let sys_columns_layout =
+                crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
+
+            for (col_oid, col_table_oid, col_name, col_type, col_pos, col_null) in columns_data {
+                let mut col_bytes = vec![0u8; sys_columns_layout.fixed_len as usize];
+                sys_columns_layout.write_field(
+                    "oid",
+                    0,
+                    &mut col_bytes,
+                    &crate::databox::Value::U32(col_oid),
+                );
+                sys_columns_layout.write_field(
+                    "table_oid",
+                    1,
+                    &mut col_bytes,
+                    &crate::databox::Value::U32(col_table_oid),
+                );
+                sys_columns_layout.write_field(
+                    "name",
+                    2,
+                    &mut col_bytes,
+                    &crate::databox::Value::String(col_name),
+                );
+                sys_columns_layout.write_field(
+                    "type_id",
+                    3,
+                    &mut col_bytes,
+                    &crate::databox::Value::U8(col_type),
+                );
+                sys_columns_layout.write_field(
+                    "position",
+                    4,
+                    &mut col_bytes,
+                    &crate::databox::Value::U16(col_pos),
+                );
+                sys_columns_layout.write_field(
+                    "nullable",
+                    5,
+                    &mut col_bytes,
+                    &crate::databox::Value::Bool(col_null),
+                );
+
+                heap::insert(
+                    &*self.bp,
+                    crate::common::constants::SYS_TABLE_COLUMNS_FID,
+                    &txn,
+                    &col_bytes,
+                )
+                .await?;
+            }
+
+            Ok(())
+        }
     }
 }

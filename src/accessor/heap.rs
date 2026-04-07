@@ -37,7 +37,7 @@ struct HeapScanState<'a, B: BufferPool> {
 /// Each item is wrapped in `Result` to propagate I/O and page corruption errors.
 ///
 /// Pages are traversed as a linked list via next_page pointers.
-pub(super) async fn scan<'a, B: BufferPool>(
+pub async fn scan<'a, B: BufferPool>(
     bp: &'a B,
     file_id: FileId,
     txn: Txn,
@@ -151,7 +151,7 @@ pub(super) async fn scan<'a, B: BufferPool>(
 ///
 /// New pages are prepended to the head of the list for efficiency (only need
 /// to update header.first_page and new_page.next_page).
-pub(super) async fn insert<'a, B: BufferPool>(
+pub async fn insert<'a, B: BufferPool>(
     bp: &'a B,
     file_id: FileId,
     txn: &Txn,
@@ -256,7 +256,7 @@ pub(super) async fn insert<'a, B: BufferPool>(
 /// Fetch a single tuple by RecordId, checking MVCC visibility.
 ///
 /// The RecordId.page_id is a global LPageId, so we fetch directly by that ID.
-pub(super) async fn get<'a, B: BufferPool>(
+pub async fn get<'a, B: BufferPool>(
     bp: &'a B,
     _file_id: FileId,
     txn: &Txn,
@@ -299,7 +299,7 @@ pub(super) async fn get<'a, B: BufferPool>(
 /// it cannot see, and cannot double-delete a tuple already marked deleted.
 ///
 /// The RecordId.page_id is a global LPageId, so we fetch directly by that ID.
-pub(super) async fn delete<'a, B: BufferPool>(
+pub async fn delete<'a, B: BufferPool>(
     bp: &'a B,
     _file_id: FileId,
     txn: &Txn,

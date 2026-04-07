@@ -17,8 +17,8 @@ The database has solid foundations in the storage layer, buffer pool, accessor l
 | Data Serialization | ✅ Already complete | Done |
 | Binder/Planner/Optimizer | ✅ Already complete | Done |
 | SQL Pipeline Integration | ✅ **IMPLEMENTED** | Done |
-| Database Bootstrap | 0% complete | **HIGH** |
-| DDL Persistence | Not started | **HIGH** |
+| Database Bootstrap | ✅ **IMPLEMENTED** | Done |
+| DDL Persistence | ✅ **IMPLEMENTED** | Done |
 | Update/Delete actual implementation | ✅ **IMPLEMENTED** | Done |
 | Index Scan execution | ✅ **IMPLEMENTED** | Done |
 

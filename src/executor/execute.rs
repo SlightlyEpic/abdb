@@ -51,6 +51,31 @@ pub fn execute<'a, A: Accessor + 'a>(
 
             // DDL operations
             PhysicalPlan::CreateTable(ct) => {
+                // Convert BoundColumnDefs to catalog::Columns
+                let columns: Vec<catalog::Column> = ct
+                    .columns
+                    .iter()
+                    .map(|c| catalog::Column {
+                        oid: c.oid,
+                        table_oid: ct.table_oid,
+                        name: std::borrow::Cow::Owned(c.name.clone()),
+                        type_id: c.data_type,
+                        position: c.position,
+                        nullable: c.nullable,
+                    })
+                    .collect();
+
+                let table = catalog::Table {
+                    oid: ct.table_oid,
+                    name: std::borrow::Cow::Owned(ct.name.clone()),
+                    file_id: ct.file_id,
+                };
+
+                accessor
+                    .create_table(txn, table, columns)
+                    .await
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
                 Ok(ExecutionResult::Ok(format!("CREATE TABLE {}", ct.name)))
             }
 

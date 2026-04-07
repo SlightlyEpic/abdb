@@ -4,10 +4,10 @@ use tokio::net::TcpListener;
 
 use crate::session::Session;
 use crate::transaction::TransactionManager;
-// use crate::parser::Parser;
 use crate::{
     accessor::AccessorImpl,
     buffer::{evictor::LruKEvictor, r#impl::BufferPool},
+    db,
     server::config::AbdbConfig,
     storage::{DiskManagerImpl, allocator::SimpleAllocator, directory::BTreePageDirectory},
 };
@@ -21,6 +21,8 @@ pub struct TcpServer {
 impl TcpServer {
     pub async fn new(config: AbdbConfig) -> Self {
         std::fs::create_dir_all(&config.data_dir).expect("Could not create data dir");
+
+        let needs_bootstrap = !db::database_exists(&config.data_dir);
 
         let page_directory = Arc::new(
             BTreePageDirectory::open(config.data_dir.join("page.dir"))
@@ -37,14 +39,30 @@ impl TcpServer {
         let eviction_policy = Box::new(LruKEvictor::new(config.evictor_lru_k_size));
         let buffer_pool = Arc::new(BufferPool::new(
             config.buffer_frame_size,
-            disk_manager,
+            Arc::clone(&disk_manager),
             eviction_policy,
         ));
-        let accessor = AccessorImpl::new(buffer_pool);
+        let accessor = Arc::new(AccessorImpl::new(Arc::clone(&buffer_pool)));
+
+        if needs_bootstrap {
+            println!("Initializing new database...");
+            db::bootstrap_database(&*buffer_pool, &*disk_manager, &accessor)
+                .await
+                .expect("Failed to bootstrap database");
+            db::write_marker_file(&config.data_dir)
+                .expect("Failed to write database marker file");
+            println!("Database initialized successfully.");
+        } else {
+            println!("Loading existing database...");
+            db::load_catalog(&*buffer_pool, &accessor)
+                .await
+                .expect("Failed to load catalog");
+            println!("Catalog loaded successfully.");
+        }
 
         Self {
             config,
-            accessor: Arc::new(accessor),
+            accessor,
             txn_manager: Arc::new(TransactionManager::new()),
         }
     }

@@ -104,6 +104,11 @@ impl DataType {
     pub fn is_float(&self) -> bool {
         matches!(self, DataType::F32 | DataType::F64)
     }
+
+    /// Convert from u8, returning Bool as default for invalid values.
+    pub fn from_u8(value: u8) -> Self {
+        Self::try_from(value).unwrap_or(DataType::Bool)
+    }
 }
 
 impl fmt::Display for DataType {
@@ -316,6 +321,55 @@ impl Value {
             DataType::String => Some(Value::String(
                 std::string::String::from_utf8_lossy(data).into_owned(),
             )),
+        }
+    }
+
+    /// Extract as u8, converting if possible.
+    pub fn as_u8(&self) -> Option<u8> {
+        match self {
+            Value::U8(v) => Some(*v),
+            Value::I8(v) if *v >= 0 => Some(*v as u8),
+            Value::Bool(b) => Some(*b as u8),
+            _ => self.to_u64().and_then(|v| u8::try_from(v).ok()),
+        }
+    }
+
+    /// Extract as u16, converting if possible.
+    pub fn as_u16(&self) -> Option<u16> {
+        match self {
+            Value::U16(v) => Some(*v),
+            Value::U8(v) => Some(*v as u16),
+            _ => self.to_u64().and_then(|v| u16::try_from(v).ok()),
+        }
+    }
+
+    /// Extract as u32, converting if possible.
+    pub fn as_u32(&self) -> Option<u32> {
+        match self {
+            Value::U32(v) => Some(*v),
+            Value::U16(v) => Some(*v as u32),
+            Value::U8(v) => Some(*v as u32),
+            _ => self.to_u64().and_then(|v| u32::try_from(v).ok()),
+        }
+    }
+
+    /// Extract as String, converting to string representation.
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            Value::String(s) => Some(s.clone()),
+            Value::Null => None,
+            other => Some(other.to_string()),
+        }
+    }
+
+    /// Extract as bool.
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Value::Bool(b) => Some(*b),
+            Value::I8(v) => Some(*v != 0),
+            Value::I64(v) => Some(*v != 0),
+            Value::U8(v) => Some(*v != 0),
+            _ => None,
         }
     }
 }

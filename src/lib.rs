@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod catalog;
 pub mod common;
 pub mod databox;
+pub mod db;
 pub mod error;
 pub mod executor;
 pub mod optimizer;
