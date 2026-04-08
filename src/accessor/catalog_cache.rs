@@ -142,4 +142,13 @@ impl CatalogCache {
         self.tables.remove(&oid);
         self.columns.remove(&oid);
     }
+
+    pub fn add_column(&mut self, table_oid: OId, column: Column) -> Result<()> {
+        if let Some(cols) = self.columns.get_mut(&table_oid) {
+            cols.push(column);
+            Ok(())
+        } else {
+            Err(Error::NotFound(format!("table oid {}", table_oid)))
+        }
+    }
 }

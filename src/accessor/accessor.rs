@@ -114,4 +114,11 @@ pub trait Accessor: Send + Sync {
         table_oid: aliases::OId,
         table_name: String,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn add_column(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        column: catalog::Column,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
 }

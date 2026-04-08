@@ -423,4 +423,48 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             Ok(())
         }
     }
+
+    fn add_column(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        column: catalog::Column,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            // 1. Update the in-memory cache
+            {
+                let mut cache = self.catalog.write().expect("catalog lock poisoned");
+                cache.add_column(table_oid, column.clone())?;
+            }
+
+            // 2. Persist to sys_columns
+            let sys_columns_layout =
+                crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
+            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+
+            let col_vals = [
+                crate::databox::Value::U32(column.oid),
+                crate::databox::Value::U32(column.table_oid),
+                crate::databox::Value::String(column.name.to_string()),
+                crate::databox::Value::U8(column.type_id as u8),
+                crate::databox::Value::U16(column.position),
+                crate::databox::Value::Bool(column.nullable),
+            ];
+
+            let col_bytes = sys_columns_layout.encode_tuple(&sys_columns_cols, &col_vals);
+
+            heap::insert(
+                &*self.bp,
+                crate::common::constants::SYS_TABLE_COLUMNS_FID,
+                &txn,
+                &col_bytes,
+            )
+            .await?;
+
+            // 3. Flush metadata
+            self.bp.flush_all_dirty().await.map_err(Error::BufferError)?;
+
+            Ok(())
+        }
+    }
 }

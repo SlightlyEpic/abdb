@@ -5,6 +5,7 @@ use std::pin::pin;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
 
+use crate::binder::BoundAlterAction;
 use crate::{
     accessor::Accessor,
     binder::{BoundAssignment, BoundExpr, BoundJoinCondition, BoundJoinKind, FunctionKind},
@@ -91,7 +92,28 @@ pub fn execute<'a, A: Accessor + 'a>(
                 Ok(ExecutionResult::Ok(format!("DROP TABLE {}", dt.name)))
             }
 
-            PhysicalPlan::AlterTable(_) => Ok(ExecutionResult::Ok("ALTER TABLE".to_string())),
+            PhysicalPlan::AlterTable(at) => {
+                match at.action {
+                    BoundAlterAction::AddColumn(c) => {
+                        let col = catalog::Column {
+                            oid: c.oid,
+                            table_oid: at.table_oid,
+                            name: std::borrow::Cow::Owned(c.name.clone()),
+                            type_id: c.data_type,
+                            position: c.position,
+                            nullable: c.nullable,
+                        };
+                        
+                        accessor
+                            .add_column(txn, at.table_oid, col)
+                            .await
+                            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                            
+                        Ok(ExecutionResult::Ok(format!("ALTER TABLE {} ADD COLUMN {}", at.name, c.name)))
+                    }
+                    _ => Err(DbError::Unsupported("Only ADD COLUMN is currently implemented".to_string())),
+                }
+            }
 
             PhysicalPlan::CreateIndex(ci) => {
                 Ok(ExecutionResult::Ok(format!("CREATE INDEX {}", ci.name)))
