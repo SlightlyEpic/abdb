@@ -114,7 +114,7 @@ impl TcpServer {
                         Ok(_) => {
                             let sql = query.trim();
                             if sql.is_empty() {
-                                if writer.write_all("abdb>".as_bytes()).await.is_err() {
+                                if writer.write_all("abdb> ".as_bytes()).await.is_err() {
                                     println!("Failed to write to client {}", addr);
                                 }
                                 continue;
