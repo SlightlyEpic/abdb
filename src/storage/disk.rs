@@ -315,7 +315,7 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
     fn flush_metadata(&self) -> impl Future<Output = Result<()>> + '_ + Send {
         async move {
             let next_lpage = self.next_lpage_id.load(Ordering::SeqCst);
-            self.page_directory.update_next_lpage_id(next_lpage).await?;
+            self.page_directory.update_header_state(next_lpage).await?;
             self.page_directory.flush_all_dirty().await?;
             Ok(())
         }

@@ -19,14 +19,14 @@ use super::{
     scope::Scope,
 };
 
-pub struct Binder<A: Accessor, O: OidAllocator> {
+pub struct Binder<A: Accessor> {
     accessor: Arc<A>,
-    oids: O,
+    oids: Arc<dyn OidAllocator>,
     txn: Txn,
 }
 
-impl<A: Accessor, O: OidAllocator> Binder<A, O> {
-    pub fn new(accessor: Arc<A>, oids: O, txn: Txn) -> Self {
+impl<A: Accessor> Binder<A> {
+    pub fn new(accessor: Arc<A>, oids: Arc<dyn OidAllocator>, txn: Txn) -> Self {
         Self {
             accessor,
             oids,

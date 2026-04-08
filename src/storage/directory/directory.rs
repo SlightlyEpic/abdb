@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
 use crate::common::{
-    aliases::{self, DirPageId, LPageId, PPageId},
+    aliases::{self, DirPageId, LPageId, PPageId, FileId, OId},
     constants::PAGE_BUF_SIZE,
 };
 use crate::page::{
@@ -63,7 +64,7 @@ pub trait PageDirectory: Send + Sync + 'static {
     /// Force flush changes to disk
     fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send;
     fn get_next_lpage_id(&self) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
-    fn update_next_lpage_id(&self, lpage_id: LPageId) -> impl Future<Output = Result<()>> + '_ + Send;
+    fn update_header_state(&self, lpage_id: LPageId) -> impl Future<Output = Result<()>> + '_ + Send;
 }
 
 // ============================================================================
@@ -88,6 +89,8 @@ pub struct BTreePageDirectory {
     next_dir_page: RwLock<DirPageId>,
     /// Root page of the B-tree (cached from header)
     root_page: RwLock<DirPageId>,
+    next_oid: AtomicU32,
+    next_file_id: AtomicU32,
 }
 
 impl BTreePageDirectory {
@@ -101,6 +104,8 @@ impl BTreePageDirectory {
             dirty: RwLock::new(std::collections::HashSet::new()),
             next_dir_page: RwLock::new(1), // Page 0 is header
             root_page: RwLock::new(0),     // 0 = no root yet
+            next_oid: AtomicU32::new(1000),
+            next_file_id: AtomicU32::new(100),
         };
 
         if exists {
@@ -151,7 +156,18 @@ impl BTreePageDirectory {
         *self.root_page.write().await = data.dir_root_page;
         *self.next_dir_page.write().await = if data.next_dir_page == 0 { 1 } else { data.next_dir_page };
 
+        self.next_oid.store(if data.next_oid == 0 { 1000 } else { data.next_oid }, Ordering::SeqCst);
+        self.next_file_id.store(if data.next_file_id == 0 { 100 } else { data.next_file_id }, Ordering::SeqCst);
+
         Ok(())
+    }
+
+    pub fn allocate_oid(&self) -> OId {
+        self.next_oid.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub fn allocate_file_id(&self) -> FileId {
+        self.next_file_id.fetch_add(1, Ordering::SeqCst)
     }
 
     /// Read a directory page from disk or cache.
@@ -690,12 +706,14 @@ impl PageDirectory for BTreePageDirectory {
         Ok(data.next_lpage_id)
     }
 
-    async fn update_next_lpage_id(&self, lpage_id: LPageId) -> Result<()> {
+    async fn update_header_state(&self, lpage_id: LPageId) -> Result<()> {
         let mut buffer = *self.read_page(0).await?;
         {
             let mut header = DirectoryFileHeaderPage::new(&mut buffer);
             let data = header.data_mut().map_err(|e| Error::PageCorruption(format!("{:?}", e)))?;
             data.next_lpage_id = lpage_id;
+            data.next_oid = self.next_oid.load(Ordering::SeqCst);
+            data.next_file_id = self.next_file_id.load(Ordering::SeqCst);
         }
         self.write_page(0, Box::new(buffer)).await;
         Ok(())

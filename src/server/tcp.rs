@@ -12,11 +12,23 @@ use crate::{
     storage::{DiskManagerImpl, allocator::SimpleAllocator, directory::BTreePageDirectory},
 };
 use crate::storage::directory::PageDirectory;
+use crate::binder::OidAllocator;
+use crate::common::aliases::{FileId, OId};
+
+impl OidAllocator for BTreePageDirectory {
+    fn next_oid(&self) -> OId {
+        self.allocate_oid()
+    }
+    fn next_file_id(&self) -> FileId {
+        self.allocate_file_id()
+    }
+}
 
 pub struct TcpServer {
     config: AbdbConfig,
     accessor: Arc<AccessorImpl<BufferPool<DiskManagerImpl<BTreePageDirectory, SimpleAllocator>>>>,
     txn_manager: Arc<TransactionManager>,
+    oid_allocator: Arc<dyn OidAllocator>,
 }
 
 impl TcpServer {
@@ -30,6 +42,7 @@ impl TcpServer {
                 .await
                 .expect("Could not create page directory"),
         );
+        let oid_allocator: Arc<dyn OidAllocator> = Arc::clone(&page_directory) as Arc<dyn OidAllocator>;
 
         let next_lpage_id = page_directory.get_next_lpage_id().await.unwrap_or(0);
 
@@ -70,6 +83,7 @@ impl TcpServer {
             config,
             accessor,
             txn_manager: Arc::new(TransactionManager::with_next_txn_id(max_xmin + 1)),
+            oid_allocator,
         }
     }
 
@@ -89,7 +103,7 @@ impl TcpServer {
                 .expect("Error while accepting connection");
             println!("New client connected: {}", addr);
             let mut session =
-                Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager));
+                Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager), Arc::clone(&self.oid_allocator));
 
             tokio::spawn(async move {
                 // 1. Split the socket so we can read and write independently

@@ -1,10 +1,9 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::accessor::AccessorImpl;
 use crate::binder::{Binder, OidAllocator};
 use crate::buffer::r#impl::BufferPool;
-use crate::common::aliases::{FileId, OId};
 use crate::common::txn::Txn;
 use crate::error::{DbError, Result};
 use crate::executor::{self, ExecutionResult};
@@ -20,31 +19,6 @@ type DM = DiskManagerImpl<BTreePageDirectory, SimpleAllocator>;
 type BP = BufferPool<DM>;
 type Acc = AccessorImpl<BP>;
 
-/// OID allocator for the session.
-struct SessionOidAllocator {
-    next_oid: AtomicU32,
-    next_file_id: AtomicU32,
-}
-
-impl SessionOidAllocator {
-    fn new(start_oid: u32, start_file_id: u32) -> Self {
-        Self {
-            next_oid: AtomicU32::new(start_oid),
-            next_file_id: AtomicU32::new(start_file_id),
-        }
-    }
-}
-
-impl OidAllocator for SessionOidAllocator {
-    fn next_oid(&self) -> OId {
-        self.next_oid.fetch_add(1, Ordering::SeqCst)
-    }
-
-    fn next_file_id(&self) -> FileId {
-        self.next_file_id.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
 pub struct Session {
     pub session_id: u64,
     pub current_txn: Option<Transaction>,
@@ -53,13 +27,13 @@ pub struct Session {
 
     accessor: Arc<Acc>,
     txn_manager: Arc<TransactionManager>,
-    oid_allocator: Arc<SessionOidAllocator>,
+    oid_allocator: Arc<dyn OidAllocator>,
 }
 
 static SESSION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Session {
-    pub fn new(accessor: Arc<Acc>, txn_manager: Arc<TransactionManager>) -> Self {
+    pub fn new(accessor: Arc<Acc>, txn_manager: Arc<TransactionManager>, oid_allocator: Arc<dyn OidAllocator>) -> Self {
         let session_id = SESSION_COUNTER.fetch_add(1, Ordering::SeqCst);
         Self {
             session_id,
@@ -68,7 +42,7 @@ impl Session {
             next_txn_isolation_level: None,
             accessor,
             txn_manager,
-            oid_allocator: Arc::new(SessionOidAllocator::new(1000, 100)),
+            oid_allocator,
         }
     }
 

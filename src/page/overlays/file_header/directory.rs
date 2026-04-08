@@ -3,7 +3,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::{
     common::{
-        aliases::{DirPageId, FileId, LPageId, Lsn, TxnId},
+        aliases::{DirPageId, FileId, LPageId, Lsn, TxnId, OId},
         constants::PAGE_BUF_SIZE,
     },
     page::{PageType, UberPageHeader, overlays},
@@ -26,6 +26,8 @@ pub struct Data {
     pub dir_root_page: DirPageId,
     pub next_dir_page: DirPageId,
     pub next_file_id: FileId,
+    pub next_oid: OId,
+    pub _pad: u32,
 }
 
 #[derive(Debug)]
@@ -132,7 +134,9 @@ where
             next_lpage_id: 0,
             dir_root_page: 0,
             next_dir_page: 1,
-            next_file_id: 0,
+            next_file_id: 100,
+            next_oid: 1000,
+            _pad: 0,
         };
         header_data
             .write_to_prefix(&mut data.as_mut()[UBER_HEADER_SIZE..])
