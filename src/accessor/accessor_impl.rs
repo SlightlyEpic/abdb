@@ -209,9 +209,9 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
 
     // -- Catalog operations (synchronous, from cache) ------------------------
 
-    fn catalog_get_table_by_name(&self, _txn: Txn, table_name: String) -> Result<catalog::Table> {
+    fn catalog_get_table_by_name(&self, _txn: Txn, table_name: &str) -> Result<catalog::Table> {
         let cache = self.catalog.read().expect("catalog lock poisoned");
-        cache.get_table_by_name(&table_name)
+        cache.get_table_by_name(table_name)
     }
 
     fn catalog_get_table_by_oid(
@@ -223,9 +223,9 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         cache.get_table_by_oid(table_oid)
     }
 
-    fn catalog_get_index_by_name(&self, _txn: Txn, index_name: String) -> Result<catalog::Index> {
+    fn catalog_get_index_by_name(&self, _txn: Txn, index_name: &str) -> Result<catalog::Index> {
         let cache = self.catalog.read().expect("catalog lock poisoned");
-        cache.get_index_by_name(&index_name)
+        cache.get_index_by_name(index_name)
     }
 
     fn catalog_get_index_by_oid(

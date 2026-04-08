@@ -88,10 +88,10 @@ pub trait Accessor: Send + Sync {
     // The accessor will ensure that all catalog pages are always held in memory
     // So catalog operations should essentially be O(1)
 
-    fn catalog_get_table_by_name(&self, txn: Txn, table_name: String) -> Result<catalog::Table>;
+    fn catalog_get_table_by_name(&self, txn: Txn, table_name: &str) -> Result<catalog::Table>;
     fn catalog_get_table_by_oid(&self, txn: Txn, table_oid: aliases::OId)
     -> Result<catalog::Table>;
-    fn catalog_get_index_by_name(&self, txn: Txn, index_name: String) -> Result<catalog::Index>;
+    fn catalog_get_index_by_name(&self, txn: Txn, index_name: &str) -> Result<catalog::Index>;
     fn catalog_get_index_by_oid(&self, txn: Txn, index_oid: aliases::OId)
     -> Result<catalog::Index>;
     fn catalog_get_table_columns(

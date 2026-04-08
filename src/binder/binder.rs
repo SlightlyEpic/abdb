@@ -64,7 +64,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_create_table(&self, stmt: CreateTableStmt) -> BindResult<BoundStatement> {
         let exists = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.name.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.name)
             .is_ok();
 
         if exists {
@@ -128,7 +128,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_drop_table(&self, stmt: DropTableStmt) -> BindResult<BoundStatement> {
         match self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.name.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.name)
         {
             Ok(table) => Ok(BoundStatement::DropTable(BoundDropTable {
                 table_oid: table.oid,
@@ -149,7 +149,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_alter_table(&self, stmt: AlterTableStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.name.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.name)
             .map_err(|_| BindError::UnknownTable(stmt.name.clone()))?;
 
         let columns = self
@@ -241,7 +241,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
 
         let exists = self
             .accessor
-            .catalog_get_index_by_name(self.txn, stmt.name.clone())
+            .catalog_get_index_by_name(self.txn, &stmt.name)
             .is_ok();
 
         if exists {
@@ -253,7 +253,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
 
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.table.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let columns = self
@@ -281,7 +281,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_drop_index(&self, stmt: DropIndexStmt) -> BindResult<BoundStatement> {
         match self
             .accessor
-            .catalog_get_index_by_name(self.txn, stmt.name.clone())
+            .catalog_get_index_by_name(self.txn, &stmt.name)
         {
             Ok(index) => Ok(BoundStatement::DropIndex(BoundDropIndex {
                 index_oid: index.oid,
@@ -302,7 +302,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_insert(&self, stmt: InsertStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.table.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
@@ -373,7 +373,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_update(&self, stmt: UpdateStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.table.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
@@ -419,7 +419,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
     fn bind_delete(&self, stmt: DeleteStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, stmt.table.clone())
+            .catalog_get_table_by_name(self.txn, &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
@@ -600,7 +600,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
             TableRef::Named { name, alias } => {
                 let table = self
                     .accessor
-                    .catalog_get_table_by_name(self.txn, name.clone())
+                    .catalog_get_table_by_name(self.txn, &name)
                     .map_err(|_| BindError::UnknownTable(name))?;
                 let mut columns = self
                     .accessor
