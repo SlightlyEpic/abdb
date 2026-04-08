@@ -456,6 +456,8 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::NestedLoopJoin(join) => {
+                let left_width = join.left.schema().len();
+                let right_width = join.right.schema().len();
                 let left_result = execute(*join.left, accessor, txn).await?;
                 let right_result = execute(*join.right, accessor, txn).await?;
 
@@ -477,6 +479,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                             right_rows,
                             &join.condition,
                             &join.kind,
+                            left_width,
+                            right_width,
                         )?;
                         Ok(ExecutionResult::Rows { columns, rows })
                     }
@@ -485,6 +489,8 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::HashJoin(join) => {
+                let left_width = join.left.schema().len();
+                let right_width = join.right.schema().len();
                 let left_result = execute(*join.left, accessor, txn).await?;
                 let right_result = execute(*join.right, accessor, txn).await?;
 
@@ -508,6 +514,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                             &join.right_keys,
                             &join.residual,
                             &join.kind,
+                            left_width,
+                            right_width,
                         )?;
                         Ok(ExecutionResult::Rows { columns, rows })
                     }
@@ -850,6 +858,8 @@ fn execute_nested_loop_join(
     right: Vec<Tuple>,
     condition: &BoundJoinCondition,
     kind: &BoundJoinKind,
+    left_width: usize,
+    right_width: usize,
 ) -> Result<Vec<Tuple>> {
     let mut result = Vec::new();
 
@@ -875,8 +885,7 @@ fn execute_nested_loop_join(
                     }
                 }
                 if !matched {
-                    let null_right =
-                        Tuple::new(vec![Value::Null; right.first().map(|r| r.len()).unwrap_or(0)]);
+                    let null_right = Tuple::new(vec![Value::Null; right_width]);
                     result.push(l.concat(&null_right));
                 }
             }
@@ -892,8 +901,7 @@ fn execute_nested_loop_join(
                     }
                 }
                 if !matched {
-                    let null_left =
-                        Tuple::new(vec![Value::Null; left.first().map(|l| l.len()).unwrap_or(0)]);
+                    let null_left = Tuple::new(vec![Value::Null; left_width]);
                     result.push(null_left.concat(r));
                 }
             }
@@ -912,17 +920,14 @@ fn execute_nested_loop_join(
                     }
                 }
                 if !matched {
-                    let null_right =
-                        Tuple::new(vec![Value::Null; right.first().map(|r| r.len()).unwrap_or(0)]);
+                    let null_right = Tuple::new(vec![Value::Null; right_width]);
                     result.push(l.concat(&null_right));
                 }
             }
 
-            // Add unmatched right rows
             for (ri, r) in right.iter().enumerate() {
                 if !right_matched[ri] {
-                    let null_left =
-                        Tuple::new(vec![Value::Null; left.first().map(|l| l.len()).unwrap_or(0)]);
+                    let null_left = Tuple::new(vec![Value::Null; left_width]);
                     result.push(null_left.concat(r));
                 }
             }
@@ -963,16 +968,17 @@ fn execute_hash_join(
     right_keys: &[BoundExpr],
     residual: &Option<BoundExpr>,
     kind: &BoundJoinKind,
+    left_width: usize,
+    right_width: usize,
 ) -> Result<Vec<Tuple>> {
-    // Build hash table from left side using string keys (since Value can't be hashed)
-    let mut hash_table: HashMap<String, Vec<Tuple>> = HashMap::new();
-    for l in &left {
+    let mut hash_table: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, l) in left.iter().enumerate() {
         let key_vals: Vec<Value> = left_keys
             .iter()
             .map(|k| evaluate_expr(k, l))
             .collect::<Result<_>>()?;
         let key = values_to_key(&key_vals);
-        hash_table.entry(key).or_default().push(l.clone());
+        hash_table.entry(key).or_default().push(idx);
     }
 
     let mut result = Vec::new();
@@ -985,9 +991,9 @@ fn execute_hash_join(
                     .map(|k| evaluate_expr(k, r))
                     .collect::<Result<_>>()?;
                 let key = values_to_key(&key_vals);
-                if let Some(matches) = hash_table.get(&key) {
-                    for l in matches {
-                        let combined = l.concat(r);
+                if let Some(indices) = hash_table.get(&key) {
+                    for &li in indices {
+                        let combined = left[li].concat(r);
                         if check_residual(&combined, residual)? {
                             result.push(combined);
                         }
@@ -996,7 +1002,7 @@ fn execute_hash_join(
             }
         }
         BoundJoinKind::LeftOuter => {
-            let mut left_matched: HashMap<String, bool> = HashMap::new();
+            let mut left_matched = vec![false; left.len()];
 
             for r in &right {
                 let key_vals: Vec<Value> = right_keys
@@ -1004,39 +1010,86 @@ fn execute_hash_join(
                     .map(|k| evaluate_expr(k, r))
                     .collect::<Result<_>>()?;
                 let key = values_to_key(&key_vals);
-                if let Some(matches) = hash_table.get(&key) {
-                    for l in matches {
-                        let combined = l.concat(r);
+                if let Some(indices) = hash_table.get(&key) {
+                    for &li in indices {
+                        let combined = left[li].concat(r);
                         if check_residual(&combined, residual)? {
                             result.push(combined);
-                            let l_key_vals: Vec<Value> = left_keys
-                                .iter()
-                                .map(|k| evaluate_expr(k, l))
-                                .collect::<Result<_>>()?;
-                            left_matched.insert(values_to_key(&l_key_vals), true);
+                            left_matched[li] = true;
                         }
                     }
                 }
             }
 
-            // Add unmatched left rows
-            for l in &left {
-                let key_vals: Vec<Value> = left_keys
-                    .iter()
-                    .map(|k| evaluate_expr(k, l))
-                    .collect::<Result<_>>()?;
-                let key = values_to_key(&key_vals);
-                if !left_matched.contains_key(&key) {
-                    let null_right =
-                        Tuple::new(vec![Value::Null; right.first().map(|r| r.len()).unwrap_or(0)]);
-                    result.push(l.concat(&null_right));
+            for (li, matched) in left_matched.iter().enumerate() {
+                if !matched {
+                    let null_right = Tuple::new(vec![Value::Null; right_width]);
+                    result.push(left[li].concat(&null_right));
                 }
             }
         }
-        _ => {
-            // Fall back to nested loop for other join types
-            let condition = BoundJoinCondition::None;
-            return execute_nested_loop_join(left, right, &condition, kind);
+        BoundJoinKind::RightOuter => {
+            let mut right_matched = vec![false; right.len()];
+
+            for (ri, r) in right.iter().enumerate() {
+                let key_vals: Vec<Value> = right_keys
+                    .iter()
+                    .map(|k| evaluate_expr(k, r))
+                    .collect::<Result<_>>()?;
+                let key = values_to_key(&key_vals);
+                if let Some(indices) = hash_table.get(&key) {
+                    for &li in indices {
+                        let combined = left[li].concat(r);
+                        if check_residual(&combined, residual)? {
+                            result.push(combined);
+                            right_matched[ri] = true;
+                        }
+                    }
+                }
+            }
+
+            for (ri, matched) in right_matched.iter().enumerate() {
+                if !matched {
+                    let null_left = Tuple::new(vec![Value::Null; left_width]);
+                    result.push(null_left.concat(&right[ri]));
+                }
+            }
+        }
+        BoundJoinKind::FullOuter => {
+            let mut left_matched = vec![false; left.len()];
+            let mut right_matched = vec![false; right.len()];
+
+            for (ri, r) in right.iter().enumerate() {
+                let key_vals: Vec<Value> = right_keys
+                    .iter()
+                    .map(|k| evaluate_expr(k, r))
+                    .collect::<Result<_>>()?;
+                let key = values_to_key(&key_vals);
+                if let Some(indices) = hash_table.get(&key) {
+                    for &li in indices {
+                        let combined = left[li].concat(r);
+                        if check_residual(&combined, residual)? {
+                            result.push(combined);
+                            left_matched[li] = true;
+                            right_matched[ri] = true;
+                        }
+                    }
+                }
+            }
+
+            for (li, matched) in left_matched.iter().enumerate() {
+                if !matched {
+                    let null_right = Tuple::new(vec![Value::Null; right_width]);
+                    result.push(left[li].concat(&null_right));
+                }
+            }
+
+            for (ri, matched) in right_matched.iter().enumerate() {
+                if !matched {
+                    let null_left = Tuple::new(vec![Value::Null; left_width]);
+                    result.push(null_left.concat(&right[ri]));
+                }
+            }
         }
     }
 

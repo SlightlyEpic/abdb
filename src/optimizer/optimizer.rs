@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     accessor::Accessor,
-    binder::{BoundExpr, BoundExprKind, BoundJoinCondition, FunctionKind, OutputColumn},
+    binder::{BoundExpr, BoundExprKind, BoundJoinCondition, BoundJoinKind, FunctionKind, OutputColumn},
     catalog,
     common::txn::Txn,
     databox::DataType,
@@ -81,12 +81,20 @@ impl<A: Accessor> Optimizer<A> {
                     let refs = collect_scope_indices(&pred);
                     let all_left = refs.iter().all(|&i| i < left_col_count);
                     let all_right = refs.iter().all(|&i| i >= left_col_count);
-                    if all_left {
-                        left_preds.push(pred);
-                    } else if all_right {
-                        right_preds.push(shift_scope_indices(pred, -(left_col_count as isize)));
-                    } else {
-                        join_preds.push(pred);
+
+                    match join.kind {
+                        BoundJoinKind::Inner => {
+                            if all_left {
+                                left_preds.push(pred);
+                            } else if all_right {
+                                right_preds.push(shift_scope_indices(pred, -(left_col_count as isize)));
+                            } else {
+                                join_preds.push(pred);
+                            }
+                        }
+                        _ => {
+                            join_preds.push(pred);
+                        }
                     }
                 }
 

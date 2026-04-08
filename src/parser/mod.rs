@@ -691,20 +691,18 @@ fn translate_join(join: &sq::Join) -> Result<Join> {
     let table = translate_table_factor(&join.relation)?;
 
     let (kind, condition) = match &join.join_operator {
-        sq::JoinOperator::Inner(constraint) => {
-            (JoinKind::Inner, translate_join_constraint(constraint)?)
-        }
-        sq::JoinOperator::LeftOuter(constraint) => {
-            (JoinKind::LeftOuter, translate_join_constraint(constraint)?)
-        }
-        sq::JoinOperator::RightOuter(constraint) => {
-            (JoinKind::RightOuter, translate_join_constraint(constraint)?)
-        }
-        sq::JoinOperator::FullOuter(constraint) => {
-            (JoinKind::FullOuter, translate_join_constraint(constraint)?)
-        }
+        sq::JoinOperator::Inner(constraint)     => (JoinKind::Inner,     translate_join_constraint(constraint)?),
+        sq::JoinOperator::FullOuter(constraint) => (JoinKind::FullOuter, translate_join_constraint(constraint)?),
+
+        sq::JoinOperator::LeftOuter(constraint) => (JoinKind::LeftOuter, translate_join_constraint(constraint)?),
+        sq::JoinOperator::Left(constraint)      => (JoinKind::LeftOuter, translate_join_constraint(constraint)?),
+
+        sq::JoinOperator::RightOuter(constraint) => (JoinKind::RightOuter, translate_join_constraint(constraint)?),
+        sq::JoinOperator::Right(constraint)      => (JoinKind::RightOuter, translate_join_constraint(constraint)?),
+
         sq::JoinOperator::CrossJoin(_) => (JoinKind::Cross, JoinCondition::None),
-        sq::JoinOperator::CrossApply => (JoinKind::Cross, JoinCondition::None),
+        sq::JoinOperator::CrossApply   => (JoinKind::Cross, JoinCondition::None),
+
         other => {
             return Err(DbError::Parse(format!(
                 "unsupported join type: {:?}",
