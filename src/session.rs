@@ -16,8 +16,6 @@ use crate::storage::directory::BTreePageDirectory;
 use crate::storage::DiskManagerImpl;
 use crate::transaction::{IsolationLevel, Transaction, TransactionManager};
 
-pub const DEFAULT_ISOLATION_LEVEL: IsolationLevel = IsolationLevel::Snapshot;
-
 type DM = DiskManagerImpl<BTreePageDirectory, SimpleAllocator>;
 type BP = BufferPool<DM>;
 type Acc = AccessorImpl<BP>;
@@ -94,7 +92,7 @@ impl Session {
                     if self.current_txn.is_some() {
                         Err(DbError::TransactionAlreadyInProgress)
                     } else {
-                        self.current_txn = Some(self.txn_manager.begin(isolation_level));
+                        self.current_txn = Some(self.txn_manager.begin(isolation_level.unwrap_or(self.session_isolation_level)));
                         Ok("BEGIN".into())
                     }
                 }

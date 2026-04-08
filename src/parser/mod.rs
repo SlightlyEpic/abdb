@@ -7,7 +7,6 @@ use sqlparser::parser::Parser as SqParser;
 
 use crate::databox::DataType;
 use crate::error::{DbError, Result};
-use crate::session::DEFAULT_ISOLATION_LEVEL;
 use crate::transaction::IsolationLevel;
 use ast::*;
 
@@ -32,15 +31,15 @@ fn translate_statement(stmt: sq::Statement) -> Result<Statement> {
             .. // Rest of these are syntactical variations.
         } => {
             let isolation_level = match modes.as_slice() {
-                [] => DEFAULT_ISOLATION_LEVEL,
+                [] => None,
 
-                [sq::TransactionMode::IsolationLevel(isl)] => match isl {
+                [sq::TransactionMode::IsolationLevel(isl)] => Some(match isl {
                     sq::TransactionIsolationLevel::ReadCommitted    => IsolationLevel::ReadCommitted,
                     sq::TransactionIsolationLevel::ReadUncommitted  => IsolationLevel::ReadUncommitted,
                     sq::TransactionIsolationLevel::RepeatableRead   => IsolationLevel::RepeatableRead,
                     sq::TransactionIsolationLevel::Snapshot         => IsolationLevel::Snapshot,
                     sq::TransactionIsolationLevel::Serializable     => IsolationLevel::Serializable,
-                },
+                }),
 
                 [mode] => {
                     return Err(DbError::Parse(format!(

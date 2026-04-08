@@ -12,7 +12,7 @@ pub struct ColumnDef {
 
 #[derive(Debug, Clone)]
 pub enum Statement {
-    BeginTransaction(IsolationLevel),
+    BeginTransaction(Option<IsolationLevel>),
     Commit,
     Rollback,
 
