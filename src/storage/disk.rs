@@ -157,6 +157,16 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManagerImpl<D
     pub fn register_file(&self, file_id: FileId, file_type: FileType) {
         let mut types = self.file_types.write().unwrap();
         types.insert(file_id, file_type);
+        
+        let path = self.file_path(file_id, file_type);
+        let pages = if path.exists() {
+            let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let count = (len / crate::common::constants::PAGE_BUF_SIZE as u64) as u32;
+            if count == 0 { 1 } else { count }
+        } else {
+            1
+        };
+        self.allocator.register_file(file_id, pages);
     }
 
     /// Get the page directory.
@@ -304,6 +314,8 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
 
     fn flush_metadata(&self) -> impl Future<Output = Result<()>> + '_ + Send {
         async move {
+            let next_lpage = self.next_lpage_id.load(Ordering::SeqCst);
+            self.page_directory.update_next_lpage_id(next_lpage).await?;
             self.page_directory.flush_all_dirty().await?;
             Ok(())
         }

@@ -22,10 +22,10 @@ pub struct Data {
     pub magic: [u8; 8],
     pub next_tx_id: TxnId,
     pub last_checkpoint_lsn: Lsn,
-    pub next_page_id: LPageId,
+    pub next_lpage_id: LPageId,
     pub dir_root_page: DirPageId,
+    pub next_dir_page: DirPageId,
     pub next_file_id: FileId,
-    _pad: [u8; 4],
 }
 
 #[derive(Debug)]
@@ -129,10 +129,10 @@ where
             magic: MAGIC,
             next_tx_id: 1,
             last_checkpoint_lsn: 0,
-            next_page_id: 0,
+            next_lpage_id: 0,
             dir_root_page: 0,
+            next_dir_page: 1,
             next_file_id: 0,
-            _pad: [0; 4],
         };
         header_data
             .write_to_prefix(&mut data.as_mut()[UBER_HEADER_SIZE..])

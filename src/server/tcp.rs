@@ -11,6 +11,7 @@ use crate::{
     server::config::AbdbConfig,
     storage::{DiskManagerImpl, allocator::SimpleAllocator, directory::BTreePageDirectory},
 };
+use crate::storage::directory::PageDirectory;
 
 pub struct TcpServer {
     config: AbdbConfig,
@@ -29,12 +30,15 @@ impl TcpServer {
                 .await
                 .expect("Could not create page directory"),
         );
+
+        let next_lpage_id = page_directory.get_next_lpage_id().await.unwrap_or(0);
+
         let page_allocator = Arc::new(SimpleAllocator::new());
         let disk_manager = Arc::new(DiskManagerImpl::new(
             config.data_dir.clone(),
             page_directory,
             page_allocator,
-            0,
+            next_lpage_id,
         ));
         let eviction_policy = Box::new(LruKEvictor::new(config.evictor_lru_k_size));
         let buffer_pool = Arc::new(BufferPool::new(
@@ -55,7 +59,7 @@ impl TcpServer {
             0
         } else {
             println!("Loading existing database...");
-            let x = db::load_catalog(&*buffer_pool, &accessor)
+            let x = db::load_catalog(&*buffer_pool, &*disk_manager, &accessor)
                 .await
                 .expect("Failed to load catalog");
             println!("Catalog loaded successfully. max_xmin={}", x);

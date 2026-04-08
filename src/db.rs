@@ -194,10 +194,16 @@ async fn insert_sys_column_record<B: BufferPool>(
 /// caller can initialize the transaction manager's next_txn_id above it
 /// (txn ids are not currently persisted, so we reconstruct a safe high
 /// watermark at load time).
-pub async fn load_catalog<B: BufferPool>(
+pub async fn load_catalog<B, D, A>(
     bp: &B,
+    disk_manager: &DiskManagerImpl<D, A>,
     accessor: &AccessorImpl<B>,
-) -> Result<crate::common::aliases::TxnId> {
+) -> Result<crate::common::aliases::TxnId>
+where
+    B: BufferPool,
+    D: PageDirectory,
+    A: PageAllocator,
+{
     use futures::StreamExt;
     use std::pin::pin;
 
@@ -359,6 +365,8 @@ pub async fn load_catalog<B: BufferPool>(
     for table in user_tables {
         let table_oid = table.oid;
         let file_id = table.file_id;
+        disk_manager.register_file(file_id, FileType::Heap);
+
         let cols: Vec<Column> = user_columns
             .iter()
             .filter(|c| c.table_oid == table_oid)
@@ -379,6 +387,7 @@ pub async fn load_catalog<B: BufferPool>(
 
     // Register user indexes
     for index in user_indexes {
+        disk_manager.register_file(index.file_id, FileType::Index);
         accessor
             .register_index(index)
             .map_err(|e| DbError::Internal(format!("failed to register index: {:?}", e)))?;

@@ -62,6 +62,8 @@ pub trait PageDirectory: Send + Sync + 'static {
 
     /// Force flush changes to disk
     fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send;
+    fn get_next_lpage_id(&self) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
+    fn update_next_lpage_id(&self, lpage_id: LPageId) -> impl Future<Output = Result<()>> + '_ + Send;
 }
 
 // ============================================================================
@@ -147,11 +149,7 @@ impl BTreePageDirectory {
             .map_err(|e| Error::PageCorruption(format!("cannot read header data: {:?}", e)))?;
 
         *self.root_page.write().await = data.dir_root_page;
-        *self.next_dir_page.write().await = if data.next_page_id == 0 {
-            1 // At minimum, page 1 is next (page 0 is header)
-        } else {
-            data.next_page_id
-        };
+        *self.next_dir_page.write().await = if data.next_dir_page == 0 { 1 } else { data.next_dir_page };
 
         Ok(())
     }
@@ -194,11 +192,22 @@ impl BTreePageDirectory {
     }
 
     /// Allocate a new directory page.
-    async fn alloc_dir_page(&self) -> DirPageId {
-        let mut next = self.next_dir_page.write().await;
-        let allocated = *next;
-        *next += 1;
-        allocated
+    async fn alloc_dir_page(&self) -> Result<DirPageId> {
+        let allocated = {
+            let mut next = self.next_dir_page.write().await;
+            let val = *next;
+            *next += 1;
+            val
+        };
+        
+        let mut buffer = *self.read_page(0).await?;
+        {
+            let mut header = DirectoryFileHeaderPage::new(&mut buffer);
+            let data = header.data_mut().map_err(|e| Error::PageCorruption(format!("cannot write header: {:?}", e)))?;
+            data.next_dir_page = allocated + 1;
+        }
+        self.write_page(0, Box::new(buffer)).await;
+        Ok(allocated)
     }
 
     /// Update the root page in header.
@@ -213,7 +222,6 @@ impl BTreePageDirectory {
                 .data_mut()
                 .map_err(|e| Error::PageCorruption(format!("cannot write header: {:?}", e)))?;
             data.dir_root_page = new_root;
-            data.next_page_id = *self.next_dir_page.read().await;
         }
         self.write_page(0, Box::new(buffer)).await;
 
@@ -327,7 +335,7 @@ impl BTreePageDirectory {
         let separator = entries[mid].0 as u64;
 
         // Allocate new leaf for upper half
-        let new_leaf_id = self.alloc_dir_page().await;
+        let new_leaf_id = self.alloc_dir_page().await?;
         let mut new_buf = Box::new([0u8; PAGE_BUF_SIZE]);
         {
             let mut new_page = DirectoryLeafPage::init(new_buf.as_mut(), new_leaf_id);
@@ -404,7 +412,7 @@ impl BTreePageDirectory {
         let new_leftmost = entries[mid].right_child;
 
         // Allocate new inner page for upper half
-        let new_inner_id = self.alloc_dir_page().await;
+        let new_inner_id = self.alloc_dir_page().await?;
         let mut new_buf = Box::new([0u8; PAGE_BUF_SIZE]);
         {
             let mut new_page =
@@ -473,7 +481,7 @@ impl BTreePageDirectory {
 
         // All ancestors split - create new root
         let old_root = *self.root_page.read().await;
-        let new_root_id = self.alloc_dir_page().await;
+        let new_root_id = self.alloc_dir_page().await?;
         let mut new_root_buf = Box::new([0u8; PAGE_BUF_SIZE]);
         {
             let mut root_page =
@@ -516,7 +524,7 @@ impl PageDirectory for BTreePageDirectory {
 
             // Handle empty tree
             if root == 0 {
-                let new_leaf_id = self.alloc_dir_page().await;
+                let new_leaf_id = self.alloc_dir_page().await?;
                 let mut buffer = Box::new([0u8; PAGE_BUF_SIZE]);
                 {
                     let mut page = DirectoryLeafPage::init(buffer.as_mut(), new_leaf_id);
@@ -552,7 +560,7 @@ impl PageDirectory for BTreePageDirectory {
 
                 if path.is_empty() {
                     // Leaf was root - create new root
-                    let new_root_id = self.alloc_dir_page().await;
+                    let new_root_id = self.alloc_dir_page().await?;
                     let mut new_root_buf = Box::new([0u8; PAGE_BUF_SIZE]);
                     {
                         let mut root_page =
@@ -673,5 +681,23 @@ impl PageDirectory for BTreePageDirectory {
 
             Ok(())
         }
+    }
+
+    async fn get_next_lpage_id(&self) -> Result<LPageId> {
+        let buffer = self.read_page(0).await?;
+        let header = DirectoryFileHeaderPage::new(buffer.as_ref());
+        let data = header.data().map_err(|e| Error::PageCorruption(format!("{:?}", e)))?;
+        Ok(data.next_lpage_id)
+    }
+
+    async fn update_next_lpage_id(&self, lpage_id: LPageId) -> Result<()> {
+        let mut buffer = *self.read_page(0).await?;
+        {
+            let mut header = DirectoryFileHeaderPage::new(&mut buffer);
+            let data = header.data_mut().map_err(|e| Error::PageCorruption(format!("{:?}", e)))?;
+            data.next_lpage_id = lpage_id;
+        }
+        self.write_page(0, Box::new(buffer)).await;
+        Ok(())
     }
 }

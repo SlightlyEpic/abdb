@@ -20,6 +20,7 @@ pub type Result<V> = std::result::Result<V, Error>;
 pub trait PageAllocator: Send + Sync + 'static {
     fn allocate(&self, file_id: FileId) -> impl Future<Output = Result<PPageId>> + Send;
     fn deallocate(&self, physical_id: PPageId) -> impl Future<Output = Result<()>> + Send;
+    fn register_file(&self, file_id: FileId, current_page_count: u32);
 }
 
 // ============================================================================
@@ -45,15 +46,6 @@ impl SimpleAllocator {
         Self {
             next_page: RwLock::new(HashMap::new()),
         }
-    }
-
-    /// Register a file with its current page count.
-    ///
-    /// This should be called when opening existing files to set the
-    /// starting point for new allocations.
-    pub fn register_file(&self, file_id: FileId, current_page_count: u32) {
-        let mut map = self.next_page.write().expect("allocator lock poisoned");
-        map.insert(file_id, current_page_count);
     }
 
     /// Get the current page count for a file.
@@ -90,5 +82,14 @@ impl PageAllocator for SimpleAllocator {
     fn deallocate(&self, _physical_id: PPageId) -> impl Future<Output = Result<()>> + Send {
         // Simple allocator does not reclaim pages - this is a no-op
         async { Ok(()) }
+    }
+
+    /// Register a file with its current page count.
+    ///
+    /// This should be called when opening existing files to set the
+    /// starting point for new allocations.
+    fn register_file(&self, file_id: FileId, current_page_count: u32) {
+        let mut map = self.next_page.write().expect("allocator lock poisoned");
+        map.insert(file_id, current_page_count);
     }
 }
