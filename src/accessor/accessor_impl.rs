@@ -304,22 +304,22 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
 
             // 3. Persist to system tables
             // Extract data from cache before any awaits (RwLockGuard is not Send)
-            let (table_name, columns_data): (String, Vec<(u32, u32, String, u8, u16, bool)>) = {
+            let (table_name, columns_data): (String, Vec<(u32, u32, String, u8, u16, bool, bool, bool)>) = {
                 let cache = self.catalog.read().expect("catalog lock poisoned");
                 let table_info = cache.get_table_by_oid(table_oid)?;
                 let columns = cache.get_table_columns(table_oid)?;
                 let cols_data = columns
                     .iter()
-                    .map(|c| {
-                        (
-                            c.oid,
-                            c.table_oid,
-                            c.name.to_string(),
-                            c.type_id as u8,
-                            c.position,
-                            c.nullable,
-                        )
-                    })
+                    .map(|c| (
+                        c.oid, 
+                        c.table_oid, 
+                        c.name.to_string(), 
+                        c.type_id as u8, 
+                        c.position, 
+                        c.nullable, 
+                        c.is_unique, 
+                        c.is_primary_key
+                    ))
                     .collect();
                 (table_info.name.to_string(), cols_data)
             };
@@ -349,9 +349,8 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             let sys_columns_layout =
                 crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
 
-            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
-
-            for (col_oid, col_table_oid, col_name, col_type, col_pos, col_null) in columns_data {
+            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key"];
+            for (col_oid, col_table_oid, col_name, col_type, col_pos, col_null, col_uniq, col_pk) in columns_data {
                 let col_vals = [
                     crate::databox::Value::U32(col_oid),
                     crate::databox::Value::U32(col_table_oid),
@@ -359,6 +358,8 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                     crate::databox::Value::U8(col_type),
                     crate::databox::Value::U16(col_pos),
                     crate::databox::Value::Bool(col_null),
+                    crate::databox::Value::Bool(col_uniq),
+                    crate::databox::Value::Bool(col_pk),
                 ];
 
                 let col_bytes = sys_columns_layout.encode_tuple(&sys_columns_cols, &col_vals);
@@ -445,8 +446,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             // 2. Persist to sys_columns
             let sys_columns_layout =
                 crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
-            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
-
+            let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key"];
             let col_vals = [
                 crate::databox::Value::U32(column.oid),
                 crate::databox::Value::U32(column.table_oid),
@@ -454,6 +454,8 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                 crate::databox::Value::U8(column.type_id as u8),
                 crate::databox::Value::U16(column.position),
                 crate::databox::Value::Bool(column.nullable),
+                crate::databox::Value::Bool(column.is_unique),
+                crate::databox::Value::Bool(column.is_primary_key),
             ];
 
             let col_bytes = sys_columns_layout.encode_tuple(&sys_columns_cols, &col_vals);
@@ -502,7 +504,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                             cache.get_table_columns(table_oid)?.into_iter().find(|c| c.oid == column_oid).unwrap()
                         };
 
-                        let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+                        let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key"];
                         let col_vals = [
                             crate::databox::Value::U32(col.oid),
                             crate::databox::Value::U32(col.table_oid),
@@ -510,6 +512,8 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                             crate::databox::Value::U8(col.type_id as u8),
                             crate::databox::Value::U16(col.position),
                             crate::databox::Value::Bool(col.nullable),
+                            crate::databox::Value::Bool(col.is_unique),
+                            crate::databox::Value::Bool(col.is_primary_key),
                         ];
                         
                         let new_bytes = columns_layout.encode_tuple(&sys_columns_cols, &col_vals);

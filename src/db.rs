@@ -169,7 +169,7 @@ async fn insert_sys_column_record<B: BufferPool>(
     // sys_columns schema: oid, table_oid, name, type_id, position, nullable
     let layout = TupleLayout::from(schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
 
-    let cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+    let cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key"];
     let vals = [
         Value::U32(column.oid),
         Value::U32(column.table_oid),
@@ -177,6 +177,8 @@ async fn insert_sys_column_record<B: BufferPool>(
         Value::U8(column.type_id as u8),
         Value::U16(column.position),
         Value::Bool(column.nullable),
+        Value::Bool(column.is_unique),
+        Value::Bool(column.is_primary_key),
     ];
 
     let tuple_bytes = layout.encode_tuple(&cols, &vals);
@@ -303,6 +305,15 @@ where
             .read_field("nullable", 5, &tuple_bytes)
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let is_unique = columns_layout
+            .read_field("is_unique", 6, &tuple_bytes)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let is_primary_key = columns_layout
+            .read_field("is_primary_key", 7, &tuple_bytes)
+            .and_then(|v| v
+            .as_bool())
+            .unwrap_or(false);
 
         // Skip system table columns
         if table_oid > constants::SYS_TABLE_INDEXES_OID {
@@ -313,6 +324,8 @@ where
                 type_id: DataType::from_u8(type_id_raw),
                 position,
                 nullable,
+                is_unique,
+                is_primary_key,
             });
         }
     }

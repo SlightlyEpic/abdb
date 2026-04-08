@@ -268,6 +268,8 @@ mod tests {
                 type_id: DataType::I32,
                 position: 0,
                 nullable: false,
+                is_primary_key: false,
+                is_unique: false,
             },
             catalog::Column {
                 oid: 2,
@@ -276,6 +278,8 @@ mod tests {
                 type_id: DataType::String,
                 position: 1,
                 nullable: true,
+                is_primary_key: false,
+                is_unique: false,
             },
             catalog::Column {
                 oid: 3,
@@ -284,6 +288,8 @@ mod tests {
                 type_id: DataType::U8,
                 position: 2,
                 nullable: true,
+                is_primary_key: false,
+                is_unique: false,
             },
         ]
     }

@@ -37,6 +37,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         position: 0,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 01,
@@ -45,6 +47,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         position: 1,
         type_id: DataType::String,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 02,
@@ -52,6 +56,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         name: Cow::Borrowed("file_id"),
         position: 2,
         type_id: DataType::U32,
+        is_unique: false,
+        is_primary_key: false,
         nullable: false,
     },
 ];
@@ -64,6 +70,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 0,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 11,
@@ -72,6 +80,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 1,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 12,
@@ -80,6 +90,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 2,
         type_id: DataType::String,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 13,
@@ -88,6 +100,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 3,
         type_id: DataType::U8,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 14,
@@ -96,6 +110,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 4,
         type_id: DataType::U16,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 15,
@@ -104,6 +120,28 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         position: 5,
         type_id: DataType::Bool,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
+    },
+    Column {
+        oid: 16,
+        table_oid: constants::SYS_TABLE_COLUMNS_OID,
+        name: Cow::Borrowed("is_unique"),
+        position: 6,
+        type_id: DataType::Bool,
+        nullable: false,
+        is_unique: false,
+        is_primary_key: false,
+    },
+    Column {
+        oid: 17,
+        table_oid: constants::SYS_TABLE_COLUMNS_OID,
+        name: Cow::Borrowed("is_primary_key"),
+        position: 7,
+        type_id: DataType::Bool,
+        nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
 ];
 
@@ -115,6 +153,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         position: 0,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 21,
@@ -123,6 +163,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         position: 1,
         type_id: DataType::String,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 22,
@@ -131,6 +173,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         position: 2,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 23,
@@ -139,6 +183,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         position: 3,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
     Column {
         oid: 24,
@@ -147,5 +193,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         position: 4,
         type_id: DataType::U32,
         nullable: false,
+        is_unique: false,
+        is_primary_key: false,
     },
 ];

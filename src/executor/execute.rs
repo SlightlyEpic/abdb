@@ -63,6 +63,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                         type_id: c.data_type,
                         position: c.position,
                         nullable: c.nullable,
+                        is_unique: c.unique,
+                        is_primary_key: c.primary_key,
                     })
                     .collect();
 
@@ -102,6 +104,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                             type_id: c.data_type,
                             position: c.position,
                             nullable: c.nullable,
+                            is_unique: c.unique,
+                            is_primary_key: c.primary_key,
                         };
                         
                         accessor
@@ -1130,29 +1134,50 @@ fn execute_insert<'a, A: Accessor>(
         let layout = TupleLayout::from(table_columns.to_vec());
         let mut count = 0u64;
 
-        // 1. Sort columns by position to guarantee perfect alignment with TupleLayout
         let mut sorted_cols = table_columns.to_vec();
         sorted_cols.sort_by_key(|c| c.position);
 
-        // 2. Extract names in the strictly sorted order
         let col_names: Vec<&str> = sorted_cols.iter().map(|c| c.name.as_ref()).collect();
 
         for row in rows {
-            // 3. Build values sequentially so they map 1:1 with col_names
             let mut full_values = Vec::with_capacity(sorted_cols.len());
 
             for col in &sorted_cols {
-                // Find if the user provided this column in the INSERT statement
                 let val = target_columns
                     .iter()
                     .position(|tc| tc.oid == col.oid)
                     .and_then(|idx| row.get(idx).cloned())
                     .unwrap_or(Value::Null);
 
+                if val.is_null() && !col.nullable {
+                    return Err(DbError::Internal(format!(
+                        "null value in column \"{}\" violates not-null constraint",
+                        col.name
+                    )));
+                }
+
+                if (col.is_unique || col.is_primary_key) && !val.is_null() {
+                    let stream = accessor
+                        .table_scan(txn, table.oid)
+                        .await
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                    let mut stream = std::pin::pin!(stream);
+                    while let Some(result) = stream.next().await {
+                        let (tuple_bytes, _) = result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        if let Some(existing_val) = layout.read_field(&col.name, col.position as usize, &tuple_bytes) {
+                            if existing_val == val {
+                                return Err(DbError::Internal(format!(
+                                    "duplicate key value violates unique constraint on column \"{}\"",
+                                    col.name
+                                )));
+                            }
+                        }
+                    }
+                }
+
                 full_values.push(val);
             }
 
-            // 4. Safe encoding
             let tuple_bytes = layout.encode_tuple(&col_names, &full_values);
 
             accessor
@@ -1237,11 +1262,36 @@ fn execute_update<'a, A: Accessor>(
             for assignment in assignments {
                 let new_value = evaluate_expr(&assignment.value, &row)?;
                 let col_pos = assignment.column.position as usize;
+                
+                let col = &sorted_cols[col_pos];
+                
+                if new_value.is_null() && !col.nullable {
+                    return Err(DbError::Internal(format!(
+                        "null value in column \"{}\" violates not-null constraint",
+                        col.name
+                    )));
+                }
+
+                if (col.is_unique || col.is_primary_key) && !new_value.is_null() && new_value != new_values[col_pos] {
+                    let stream = accessor.table_scan(txn, table.oid).await.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                    let mut stream = std::pin::pin!(stream);
+                    while let Some(result) = stream.next().await {
+                        let (tuple_bytes, _) = result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        if let Some(existing_val) = layout.read_field(&col.name, col.position as usize, &tuple_bytes) {
+                            if existing_val == new_value {
+                                return Err(DbError::Internal(format!(
+                                    "duplicate key value violates unique constraint on column \"{}\"",
+                                    col.name
+                                )));
+                            }
+                        }
+                    }
+                }
+
                 if col_pos < new_values.len() {
                     new_values[col_pos] = new_value;
                 }
             }
-
             // 4. Safe encoding
             let tuple_bytes = layout.encode_tuple(&col_names, &new_values);
 

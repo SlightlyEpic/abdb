@@ -24,6 +24,8 @@ pub struct Column {
     pub type_id: databox::DataType,
     pub position: u16,
     pub nullable: bool,
+    pub is_unique: bool,
+    pub is_primary_key: bool,
 }
 
 #[derive(Clone, Debug)]
