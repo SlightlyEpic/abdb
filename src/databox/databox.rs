@@ -109,6 +109,27 @@ impl DataType {
     pub fn from_u8(value: u8) -> Self {
         Self::try_from(value).unwrap_or(DataType::Bool)
     }
+
+    /// Parse a string into a strongly-typed Value based on this DataType.
+    pub fn parse_string(&self, s: &str) -> Option<Value> {
+        if s.eq_ignore_ascii_case("NULL") || s.is_empty() {
+            return Some(Value::Null);
+        }
+        match self {
+            DataType::Bool => s.parse::<bool>().map(Value::Bool).ok(),
+            DataType::I8 => s.parse::<i8>().map(Value::I8).ok(),
+            DataType::I16 => s.parse::<i16>().map(Value::I16).ok(),
+            DataType::I32 => s.parse::<i32>().map(Value::I32).ok(),
+            DataType::I64 => s.parse::<i64>().map(Value::I64).ok(),
+            DataType::U8 => s.parse::<u8>().map(Value::U8).ok(),
+            DataType::U16 => s.parse::<u16>().map(Value::U16).ok(),
+            DataType::U32 => s.parse::<u32>().map(Value::U32).ok(),
+            DataType::U64 => s.parse::<u64>().map(Value::U64).ok(),
+            DataType::F32 => s.parse::<f32>().map(Value::F32).ok(),
+            DataType::F64 => s.parse::<f64>().map(Value::F64).ok(),
+            DataType::String => Some(Value::String(s.to_string())),
+        }
+    }
 }
 
 impl fmt::Display for DataType {

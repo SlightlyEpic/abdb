@@ -169,7 +169,7 @@ async fn insert_sys_column_record<B: BufferPool>(
     // sys_columns schema: oid, table_oid, name, type_id, position, nullable
     let layout = TupleLayout::from(schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
 
-    let cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key"];
+    let cols = ["oid", "table_oid", "name", "type_id", "position", "nullable", "is_unique", "is_primary_key", "default_val"];
     let vals = [
         Value::U32(column.oid),
         Value::U32(column.table_oid),
@@ -179,6 +179,7 @@ async fn insert_sys_column_record<B: BufferPool>(
         Value::Bool(column.nullable),
         Value::Bool(column.is_unique),
         Value::Bool(column.is_primary_key),
+        column.default_val.as_ref().map(|v| Value::String(v.to_string())).unwrap_or(Value::Null),
     ];
 
     let tuple_bytes = layout.encode_tuple(&cols, &vals);
@@ -281,6 +282,11 @@ where
         let (tuple_bytes, _rid) = result
             .map_err(|e| DbError::Internal(format!("error reading sys_columns: {:?}", e)))?;
 
+        let type_id_raw = columns_layout.read_field("type_id", 3, &tuple_bytes).and_then(|v| v.as_u8()).unwrap_or(0);
+        let type_id = DataType::from_u8(type_id_raw);
+
+        let default_val_str = columns_layout.read_field("default_val", 8, &tuple_bytes).and_then(|v| v.as_string());
+        let default_val = default_val_str.and_then(|s| type_id.parse_string(&s));
         let oid = columns_layout
             .read_field("oid", 0, &tuple_bytes)
             .and_then(|v| v.as_u32())
@@ -293,10 +299,6 @@ where
             .read_field("name", 2, &tuple_bytes)
             .and_then(|v| v.as_string())
             .unwrap_or_default();
-        let type_id_raw = columns_layout
-            .read_field("type_id", 3, &tuple_bytes)
-            .and_then(|v| v.as_u8())
-            .unwrap_or(0);
         let position = columns_layout
             .read_field("position", 4, &tuple_bytes)
             .and_then(|v| v.as_u16())
@@ -326,6 +328,7 @@ where
                 nullable,
                 is_unique,
                 is_primary_key,
+                default_val,
             });
         }
     }

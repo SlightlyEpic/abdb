@@ -39,6 +39,7 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 01,
@@ -49,6 +50,7 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 02,
@@ -58,6 +60,7 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         type_id: DataType::U32,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
         nullable: false,
     },
 ];
@@ -72,6 +75,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 11,
@@ -82,6 +86,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 12,
@@ -92,6 +97,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 13,
@@ -102,6 +108,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 14,
@@ -112,6 +119,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 15,
@@ -122,6 +130,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 16,
@@ -132,6 +141,7 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 17,
@@ -142,6 +152,18 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
+    },
+    Column {
+        oid: 18,
+        table_oid: constants::SYS_TABLE_COLUMNS_OID,
+        name: Cow::Borrowed("default_val"),
+        position: 8,
+        type_id: DataType::String,
+        nullable: true,
+        is_unique: false,
+        is_primary_key: false,
+        default_val: None,
     },
 ];
 
@@ -155,6 +177,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 21,
@@ -165,6 +188,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 22,
@@ -175,6 +199,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 23,
@@ -185,6 +210,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
     Column {
         oid: 24,
@@ -195,5 +221,6 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         nullable: false,
         is_unique: false,
         is_primary_key: false,
+        default_val: None,
     },
 ];

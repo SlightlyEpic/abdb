@@ -270,6 +270,7 @@ mod tests {
                 nullable: false,
                 is_primary_key: false,
                 is_unique: false,
+                default_val: None,
             },
             catalog::Column {
                 oid: 2,
@@ -280,6 +281,7 @@ mod tests {
                 nullable: true,
                 is_primary_key: false,
                 is_unique: false,
+                default_val: None,
             },
             catalog::Column {
                 oid: 3,
@@ -290,6 +292,7 @@ mod tests {
                 nullable: true,
                 is_primary_key: false,
                 is_unique: false,
+                default_val: None,
             },
         ]
     }

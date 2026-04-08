@@ -26,6 +26,7 @@ pub struct Column {
     pub nullable: bool,
     pub is_unique: bool,
     pub is_primary_key: bool,
+    pub default_val: Option<databox::Value>,
 }
 
 #[derive(Clone, Debug)]

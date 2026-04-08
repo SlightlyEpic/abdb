@@ -56,15 +56,25 @@ pub fn execute<'a, A: Accessor + 'a>(
                 let columns: Vec<catalog::Column> = ct
                     .columns
                     .iter()
-                    .map(|c| catalog::Column {
-                        oid: c.oid,
-                        table_oid: ct.table_oid,
-                        name: std::borrow::Cow::Owned(c.name.clone()),
-                        type_id: c.data_type,
-                        position: c.position,
-                        nullable: c.nullable,
-                        is_unique: c.unique,
-                        is_primary_key: c.primary_key,
+                    .map(|c| {
+                        let mut default_val = None;
+                        if let Some(def_expr) = &c.default {
+                            if let Ok(val) = evaluate_expr(def_expr, &Tuple::empty()) {
+                                default_val = val.cast(c.data_type);
+                            }
+                        }
+                        
+                        catalog::Column {
+                            oid: c.oid,
+                            table_oid: ct.table_oid,
+                            name: std::borrow::Cow::Owned(c.name.clone()),
+                            type_id: c.data_type,
+                            position: c.position,
+                            nullable: c.nullable,
+                            is_unique: c.unique,
+                            is_primary_key: c.primary_key,
+                            default_val,
+                        }
                     })
                     .collect();
 
@@ -97,16 +107,13 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::AlterTable(at) => {
                 match at.action {
                     BoundAlterAction::AddColumn(c) => {
-                        let mut default_val = Value::Null;
+                        let mut default_val_opt = None;
                         if let Some(def_expr) = &c.default {
                             let val = evaluate_expr(def_expr, &Tuple::empty())?;
-                            
-                            default_val = val.cast(c.data_type).ok_or_else(|| {
-                                DbError::CastError(format!(
-                                    "cannot cast default value to {:?}",
-                                    c.data_type
-                                ))
+                            let casted = val.cast(c.data_type).ok_or_else(|| {
+                                DbError::CastError(format!("cannot cast default value to {:?}", c.data_type))
                             })?;
+                            default_val_opt = Some(casted);
                         }
 
                         let old_columns = accessor
@@ -127,7 +134,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                         }
 
                         if !rows_to_update.is_empty() {
-                            if !c.nullable && default_val.is_null() {
+                            if !c.nullable && default_val_opt.is_none() {
                                 return Err(DbError::Internal(format!(
                                     "cannot add NOT NULL column \"{}\" without a DEFAULT value to a populated table",
                                     c.name
@@ -153,6 +160,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                                 nullable: c.nullable,
                                 is_unique: c.unique,
                                 is_primary_key: c.primary_key,
+                                default_val: default_val_opt.clone(),
                             };
                             new_columns.push(new_col);
                             let new_layout = TupleLayout::from(new_columns.clone());
@@ -173,7 +181,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                                     let val = old_layout.read_field(&old_col.name, old_col.position as usize, &tuple_bytes).unwrap_or(Value::Null);
                                     new_values[old_col.position as usize] = val;
                                 }
-                                new_values[c.position as usize] = default_val.clone();
+                               new_values[c.position as usize] = default_val_opt.clone().unwrap_or(Value::Null);
                                 
                                 let new_tuple_bytes = new_layout.encode_tuple(&new_col_names, &new_values);
                                 accessor.table_insert(txn, at.table_oid, new_tuple_bytes).await
@@ -190,6 +198,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                             nullable: c.nullable,
                             is_unique: c.unique,
                             is_primary_key: c.primary_key,
+                            default_val: default_val_opt,
                         };
                         
                         accessor
@@ -1231,7 +1240,7 @@ fn execute_insert<'a, A: Accessor>(
                     .iter()
                     .position(|tc| tc.oid == col.oid)
                     .and_then(|idx| row.get(idx).cloned())
-                    .unwrap_or(Value::Null);
+                    .unwrap_or_else(|| col.default_val.clone().unwrap_or(Value::Null));
 
                 if val.is_null() && !col.nullable {
                     return Err(DbError::Internal(format!(
