@@ -15,8 +15,8 @@ async fn main() {
 
     let server = Arc::new(TcpServer::new(config).await);
 
-    print!("Starting abdb server");
+    println!("Starting abdb server");
     server.listen().await;
 
-    print!("Database server exiting.");
+    println!("Database server exiting.");
 }
