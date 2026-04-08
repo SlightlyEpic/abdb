@@ -129,4 +129,23 @@ pub trait Accessor: Send + Sync {
         column_oid: aliases::OId,
         new_name: String,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn catalog_get_table_indexes(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+    ) -> Result<Vec<catalog::Index>>;
+
+    fn create_index(
+        &self,
+        txn: Txn,
+        index: catalog::Index,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn drop_index(
+        &self,
+        txn: Txn,
+        index_oid: aliases::OId,
+        index_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
 }

@@ -131,10 +131,58 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::CreateIndex(ci) => {
+                let index = catalog::Index {
+                    oid: ci.index_oid,
+                    name: std::borrow::Cow::Owned(ci.name.clone()),
+                    table_oid: ci.table_oid,
+                    file_id: ci.file_id,
+                    column_oid: ci.column_oid,
+                };
+
+                accessor
+                    .create_index(txn, index.clone())
+                    .await
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+                let table = accessor.catalog_get_table_by_oid(txn, ci.table_oid)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let columns = accessor.catalog_get_table_columns(txn, ci.table_oid)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                
+                let target_col_idx = columns.iter().position(|c| c.oid == ci.column_oid)
+                    .ok_or_else(|| DbError::Internal("Indexed column not found".into()))?;
+
+                let scan = PhysSeqScan {
+                    table: table.clone(),
+                    columns: columns.clone(),
+                    alias: None,
+                    pushed_predicates: vec![],
+                    schema: Schema::empty(),
+                };
+
+                let rows = execute_seq_scan(&scan, accessor, txn).await?;
+                for row in rows {
+                    if let Some(val) = row.get(target_col_idx) {
+                        if !val.is_null() {
+                            let rid = row.rid.unwrap();
+                            let key_bytes = val.to_bytes();
+                            accessor.index_insert(txn, ci.index_oid, key_bytes, rid)
+                                .await
+                                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        }
+                    }
+                }
+
                 Ok(ExecutionResult::Ok(format!("CREATE INDEX {}", ci.name)))
             }
 
             PhysicalPlan::DropIndex(di) => {
+                if di.index_oid != 0 {
+                    accessor
+                        .drop_index(txn, di.index_oid, di.name.clone())
+                        .await
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                }
                 Ok(ExecutionResult::Ok(format!("DROP INDEX {}", di.name)))
             }
 

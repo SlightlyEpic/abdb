@@ -161,4 +161,18 @@ impl CatalogCache {
         }
         Err(Error::NotFound(format!("column oid {}", column_oid)))
     }
+
+    pub fn drop_index(&mut self, name: &str, oid: OId) {
+        self.indexes_by_name.remove(name);
+        self.indexes.remove(&oid);
+    }
+
+    pub fn get_table_indexes(&self, table_oid: OId) -> Result<Vec<catalog::Index>> {
+        Ok(self
+            .indexes
+            .values()
+            .filter(|i| i.table_oid == table_oid)
+            .cloned()
+            .collect())
+    }
 }

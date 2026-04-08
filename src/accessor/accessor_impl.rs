@@ -518,4 +518,117 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             Ok(())
         }
     }
+
+    fn catalog_get_table_indexes(
+        &self,
+        _txn: Txn,
+        table_oid: aliases::OId,
+    ) -> Result<Vec<catalog::Index>> {
+        let cache = self.catalog.read().expect("catalog lock poisoned");
+        cache.get_table_indexes(table_oid)
+    }
+
+    fn create_index(
+        &self,
+        txn: Txn,
+        index: catalog::Index,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            use crate::buffer::PageWriteGuard;
+            use crate::common::constants::PAGE_BUF_SIZE;
+            use crate::page::overlays::file_header::IndexFileHeaderPage;
+
+            let file_id = index.file_id;
+            let index_oid = index.oid;
+            let header_loc = aliases::PPageId { file: file_id, offset: 0 };
+
+            let header_lpage_id = self
+                .bp
+                .init_page_at_loc(header_loc)
+                .await
+                .map_err(Error::BufferError)?;
+
+            let mut guard = self
+                .bp
+                .fetch_page_at_loc_write(header_loc)
+                .await
+                .map_err(Error::BufferError)?;
+
+            let buffer = &mut *guard;
+            buffer.fill(0);
+
+            let temp_buffer = IndexFileHeaderPage::init(
+                [0u8; PAGE_BUF_SIZE],
+                header_lpage_id,
+                index_oid,
+                index.table_oid,
+            );
+            buffer.copy_from_slice(temp_buffer.as_buffer());
+
+            guard.mark_dirty().map_err(Error::BufferError)?;
+            drop(guard);
+
+            self.register_index(index.clone())?;
+
+            let sys_indexes_layout =
+                crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_INDEXES_TABLE.to_vec());
+
+            let sys_indexes_cols = ["oid", "name", "table_oid", "column_oid", "file_id"];
+            let sys_indexes_vals = [
+                crate::databox::Value::U32(index.oid),
+                crate::databox::Value::String(index.name.to_string()),
+                crate::databox::Value::U32(index.table_oid),
+                crate::databox::Value::U32(index.column_oid),
+                crate::databox::Value::U32(index.file_id),
+            ];
+
+            let tuple_bytes = sys_indexes_layout.encode_tuple(&sys_indexes_cols, &sys_indexes_vals);
+
+            heap::insert(
+                &*self.bp,
+                crate::common::constants::SYS_TABLE_INDEXES_FID,
+                &txn,
+                &tuple_bytes,
+            )
+            .await?;
+
+            self.bp.flush_all_dirty().await.map_err(Error::BufferError)?;
+
+            Ok(())
+        }
+    }
+
+    fn drop_index(
+        &self,
+        txn: Txn,
+        index_oid: aliases::OId,
+        index_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            {
+                let mut cache = self.catalog.write().expect("catalog lock poisoned");
+                cache.drop_index(&index_name, index_oid);
+            }
+
+            use futures::StreamExt;
+
+            let sys_indexes_fid = crate::common::constants::SYS_TABLE_INDEXES_FID;
+            let indexes_layout = crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_INDEXES_TABLE.to_vec());
+            let mut stream = std::pin::pin!(heap::scan(&*self.bp, sys_indexes_fid, txn).await?);
+
+            while let Some(result) = stream.next().await {
+                let (tuple_bytes, rid) = result?;
+                if let Some(oid) = indexes_layout.read_field("oid", 0, &tuple_bytes).and_then(|v| v.as_u32()) {
+                    if oid == index_oid {
+                        heap::delete(&*self.bp, sys_indexes_fid, &txn, rid).await?;
+                        break;
+                    }
+                }
+            }
+
+            self.bp.flush_all_dirty().await.map_err(Error::BufferError)?;
+
+            Ok(())
+        }
+    }
 }

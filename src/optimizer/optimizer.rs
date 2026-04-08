@@ -435,6 +435,9 @@ impl<A: Accessor> Optimizer<A> {
         table_oid: crate::common::aliases::OId,
         column_oid: crate::common::aliases::OId,
     ) -> Option<catalog::Index> {
+        if let Ok(indexes) = self.accessor.catalog_get_table_indexes(self.txn, table_oid) {
+            return indexes.into_iter().find(|idx| idx.column_oid == column_oid);
+        }
         None
     }
 }
