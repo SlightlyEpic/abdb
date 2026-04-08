@@ -799,8 +799,17 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
             }
 
             Expr::BinaryOp { left, op, right } => {
-                let l = self.bind_expr(left, scope)?;
-                let r = self.bind_expr(right, scope)?;
+                let mut l = self.bind_expr(left, scope)?;
+                let mut r = self.bind_expr(right, scope)?;
+
+                // Coerce numeric types to a common wider type so strict equality works
+                if is_numeric(l.data_type) && is_numeric(r.data_type) {
+                    if let Some(common) = wider_numeric(l.data_type, r.data_type) {
+                        l = self.coerce_expr(l, common, "binary op left")?;
+                        r = self.coerce_expr(r, common, "binary op right")?;
+                    }
+                }
+
                 let (dt, nullable) = infer_binary_type(op, &l, &r)?;
                 Ok(BoundExpr {
                     kind: BoundExprKind::BinaryOp {
