@@ -1,5 +1,8 @@
 abdb:
 	RUSTFLAGS=-Awarnings cargo run --bin abdb
 
+# client:
+# 	RUSTFLAGS=-Awarnings cargo run --bin client
+
 client:
-	RUSTFLAGS=-Awarnings cargo run --bin client
+	rlwrap nc localhost 8080
