@@ -10,7 +10,16 @@ use super::Tuple;
 /// Evaluate a bound expression against a tuple, producing a Value.
 pub fn evaluate_expr(expr: &BoundExpr, tuple: &Tuple) -> Result<Value> {
     match &expr.kind {
-        BoundExprKind::Literal(lit) => Ok(eval_literal(lit)),
+        BoundExprKind::Literal(lit) => {
+            let val = eval_literal(lit);
+            // The binder might have changed expr.data_type during constant folding.
+            // We must cast the runtime Value to match the expected DataType.
+            val.cast(expr.data_type)
+                .ok_or_else(|| DbError::CastError(format!(
+                    "Failed to cast literal to {:?}", 
+                    expr.data_type
+                )))
+        }
 
         BoundExprKind::ColumnRef(cr) => tuple
             .get(cr.scope_index)
