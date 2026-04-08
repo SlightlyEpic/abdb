@@ -97,6 +97,22 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::AlterTable(at) => {
                 match at.action {
                     BoundAlterAction::AddColumn(c) => {
+                        if !c.nullable && c.default.is_none() {
+                            let stream = accessor
+                                .table_scan(txn, at.table_oid)
+                                .await
+                                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                                
+                            let mut stream = std::pin::pin!(stream);
+                            
+                            if stream.next().await.is_some() {
+                                return Err(DbError::Internal(format!(
+                                    "cannot add NOT NULL column \"{}\" without a DEFAULT value to a populated table",
+                                    c.name
+                                )));
+                            }
+                        }
+
                         let col = catalog::Column {
                             oid: c.oid,
                             table_oid: at.table_oid,
