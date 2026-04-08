@@ -121,4 +121,12 @@ pub trait Accessor: Send + Sync {
         table_oid: aliases::OId,
         column: catalog::Column,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn rename_column(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        column_oid: aliases::OId,
+        new_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
 }

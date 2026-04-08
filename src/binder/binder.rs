@@ -321,7 +321,11 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
         table_columns.sort_by_key(|c| c.position);
 
         let target_columns: Vec<catalog::Column> = match &stmt.columns {
-            None => table_columns.clone(),
+            None => table_columns
+                .iter()
+                .filter(|c| !c.name.starts_with("__abdb_dropped_"))
+                .cloned()
+                .collect(),
             Some(names) => {
                 let mut resolved = Vec::with_capacity(names.len());
                 for name in names {
@@ -511,8 +515,11 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
         let mut projections: Vec<BoundSelectItem> = Vec::new();
         for item in stmt.projections {
             match item {
-                SelectItem::Wildcard => {
+               SelectItem::Wildcard => {
                     for sc in &scope.columns {
+                        if sc.column_name.starts_with("__abdb_dropped_") {
+                            continue;
+                        }
                         projections.push(BoundSelectItem {
                             alias: sc.column_name.clone(),
                             expr: BoundExpr {

@@ -151,4 +151,14 @@ impl CatalogCache {
             Err(Error::NotFound(format!("table oid {}", table_oid)))
         }
     }
+
+    pub fn rename_column(&mut self, table_oid: OId, column_oid: OId, new_name: &str) -> Result<()> {
+        if let Some(cols) = self.columns.get_mut(&table_oid) {
+            if let Some(col) = cols.iter_mut().find(|c| c.oid == column_oid) {
+                col.name = std::borrow::Cow::Owned(new_name.to_string());
+                return Ok(());
+            }
+        }
+        Err(Error::NotFound(format!("column oid {}", column_oid)))
+    }
 }

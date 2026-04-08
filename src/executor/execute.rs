@@ -111,6 +111,21 @@ pub fn execute<'a, A: Accessor + 'a>(
                             
                         Ok(ExecutionResult::Ok(format!("ALTER TABLE {} ADD COLUMN {}", at.name, c.name)))
                     }
+                    BoundAlterAction::DropColumn { column_oid, .. } => {
+                        let dropped_name = format!("__abdb_dropped_{}", column_oid);
+                        accessor
+                            .rename_column(txn, at.table_oid, column_oid, dropped_name)
+                            .await
+                            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        Ok(ExecutionResult::Ok(format!("ALTER TABLE {} DROP COLUMN", at.name)))
+                    }
+                    BoundAlterAction::RenameColumn { column_oid, new_name, .. } => {
+                        accessor
+                            .rename_column(txn, at.table_oid, column_oid, new_name.clone())
+                            .await
+                            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        Ok(ExecutionResult::Ok(format!("ALTER TABLE {} RENAME COLUMN TO {}", at.name, new_name)))
+                    }
                     _ => Err(DbError::Unsupported("Only ADD COLUMN is currently implemented".to_string())),
                 }
             }

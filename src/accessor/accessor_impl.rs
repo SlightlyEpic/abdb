@@ -467,4 +467,55 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             Ok(())
         }
     }
+
+    fn rename_column(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        column_oid: aliases::OId,
+        new_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            {
+                let mut cache = self.catalog.write().expect("catalog lock poisoned");
+                cache.rename_column(table_oid, column_oid, &new_name)?;
+            }
+
+            use futures::StreamExt;
+            let sys_columns_fid = crate::common::constants::SYS_TABLE_COLUMNS_FID;
+            let columns_layout = crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
+            let mut stream = std::pin::pin!(heap::scan(&*self.bp, sys_columns_fid, txn).await?);
+
+            while let Some(result) = stream.next().await {
+                let (tuple_bytes, rid) = result?;
+                if let Some(oid) = columns_layout.read_field("oid", 0, &tuple_bytes).and_then(|v| v.as_u32()) {
+                    if oid == column_oid {
+                        heap::delete(&*self.bp, sys_columns_fid, &txn, rid).await?;
+
+                        let col = {
+                            let cache = self.catalog.read().unwrap();
+                            cache.get_table_columns(table_oid)?.into_iter().find(|c| c.oid == column_oid).unwrap()
+                        };
+
+                        let sys_columns_cols = ["oid", "table_oid", "name", "type_id", "position", "nullable"];
+                        let col_vals = [
+                            crate::databox::Value::U32(col.oid),
+                            crate::databox::Value::U32(col.table_oid),
+                            crate::databox::Value::String(col.name.to_string()),
+                            crate::databox::Value::U8(col.type_id as u8),
+                            crate::databox::Value::U16(col.position),
+                            crate::databox::Value::Bool(col.nullable),
+                        ];
+                        
+                        let new_bytes = columns_layout.encode_tuple(&sys_columns_cols, &col_vals);
+                        heap::insert(&*self.bp, sys_columns_fid, &txn, &new_bytes).await?;
+                        break;
+                    }
+                }
+            }
+
+            self.bp.flush_all_dirty().await.map_err(Error::BufferError)?;
+            Ok(())
+        }
+    }
 }
