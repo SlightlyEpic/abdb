@@ -1,7 +1,7 @@
 use crate::{
     binder::{
-        BoundDelete, BoundExpr, BoundExprKind, BoundInsert, BoundInsertSource, BoundJoin,
-        BoundJoinCondition, BoundSelect, BoundSelectItem, BoundStatement, BoundTableRef,
+        BoundColumnRef, BoundDelete, BoundExpr, BoundExprKind, BoundInsert, BoundInsertSource,
+        BoundJoin, BoundJoinCondition, BoundSelect, BoundSelectItem, BoundStatement, BoundTableRef,
         BoundUpdate, FunctionKind, OutputColumn,
     },
     databox::DataType,
@@ -48,25 +48,54 @@ impl Planner {
         let aggregates = collect_aggregates(&stmt.projections, &stmt.having);
         let has_aggregates = !aggregates.is_empty();
 
-        if has_group_by || has_aggregates {
-            let agg_schema = build_aggregate_schema(&stmt.group_by, &aggregates, &plan.schema());
-            plan = LogicalPlan::Aggregate(Aggregate {
-                group_by: stmt.group_by,
-                aggregates,
-                input: Box::new(plan),
-                schema: agg_schema,
-            });
-        }
+        let agg_schema: Option<Schema>;
 
-        if let Some(having) = stmt.having {
+        let (projections, having_opt) = if has_group_by || has_aggregates {
+            let input_schema = plan.schema();
+            let schema = build_aggregate_schema(&stmt.group_by, &aggregates, &input_schema);
+
+            plan = LogicalPlan::Aggregate(Aggregate {
+                group_by: stmt.group_by.clone(),
+                aggregates: aggregates.clone(),
+                input: Box::new(plan),
+                schema: schema.clone(),
+            });
+
+            agg_schema = Some(schema.clone());
+
+            let rewritten_projections = stmt
+                .projections
+                .into_iter()
+                .map(|p| {
+                    let new_expr =
+                        rewrite_for_agg_output(p.expr, &stmt.group_by, &aggregates, &schema);
+                    BoundSelectItem {
+                        expr: new_expr,
+                        alias: p.alias,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let rewritten_having = stmt
+                .having
+                .map(|h| rewrite_for_agg_output(h, &stmt.group_by, &aggregates, &schema));
+
+            (rewritten_projections, rewritten_having)
+        } else {
+            agg_schema = None;
+            (stmt.projections, stmt.having)
+        };
+
+        if let Some(having) = having_opt {
             plan = LogicalPlan::Filter(Filter {
                 predicate: having,
                 input: Box::new(plan),
             });
         }
 
-        let (exprs, aliases): (Vec<_>, Vec<_>) = stmt
-            .projections
+        let proj_exprs: Vec<BoundExpr> = projections.iter().map(|p| p.expr.clone()).collect();
+
+        let (exprs, aliases): (Vec<_>, Vec<_>) = projections
             .into_iter()
             .map(|p| (p.expr, p.alias))
             .unzip();
@@ -99,10 +128,18 @@ impl Planner {
             let keys = stmt
                 .order_by
                 .into_iter()
-                .map(|o| SortKey {
-                    expr: o.expr,
-                    asc: o.asc,
-                    nulls_first: o.nulls_first,
+                .map(|o| {
+                    let expr = if let Some(ref schema) = agg_schema {
+                        rewrite_for_agg_output(o.expr, &stmt.group_by, &aggregates, schema)
+                    } else {
+                        o.expr
+                    };
+                    let expr = rewrite_to_projection_output(expr, &proj_exprs);
+                    SortKey {
+                        expr,
+                        asc: o.asc,
+                        nulls_first: o.nulls_first,
+                    }
                 })
                 .collect();
             plan = LogicalPlan::Sort(Sort {
@@ -308,6 +345,222 @@ impl Planner {
     }
 }
 
+fn rewrite_for_agg_output(
+    expr: BoundExpr,
+    group_by: &[BoundExpr],
+    aggregates: &[AggregateExpr],
+    agg_schema: &Schema,
+) -> BoundExpr {
+    match &expr.kind {
+        BoundExprKind::Function(f) if f.kind.is_aggregate() => {
+            let agg_idx = aggregates.iter().position(|a| {
+                a.kind == f.kind
+                    && a.distinct == f.distinct
+                    && match (&a.arg, f.args.first()) {
+                        (None, None) => true,
+                        (Some(ae), Some(fe)) => exprs_structurally_equal(ae, fe),
+                        _ => false,
+                    }
+            });
+            let slot = agg_idx
+                .map(|i| group_by.len() + i)
+                .unwrap_or(group_by.len());
+            let col_name = agg_schema
+                .columns
+                .get(slot)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "?agg?".to_string());
+            BoundExpr {
+                data_type: expr.data_type,
+                nullable: expr.nullable,
+                kind: BoundExprKind::ColumnRef(BoundColumnRef {
+                    qualifier: None,
+                    column_name: col_name,
+                    scope_index: slot,
+                }),
+            }
+        }
+
+        BoundExprKind::ColumnRef(cr) => {
+            let group_slot = group_by.iter().position(|gb| {
+                if let BoundExprKind::ColumnRef(gcr) = &gb.kind {
+                    gcr.scope_index == cr.scope_index
+                } else {
+                    false
+                }
+            });
+            if let Some(slot) = group_slot {
+                let col_name = agg_schema
+                    .columns
+                    .get(slot)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| cr.column_name.clone());
+                BoundExpr {
+                    data_type: expr.data_type,
+                    nullable: expr.nullable,
+                    kind: BoundExprKind::ColumnRef(BoundColumnRef {
+                        qualifier: cr.qualifier.clone(),
+                        column_name: col_name,
+                        scope_index: slot,
+                    }),
+                }
+            } else {
+                expr
+            }
+        }
+
+        BoundExprKind::BinaryOp { left, op, right } => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::BinaryOp {
+                left: Box::new(rewrite_for_agg_output(
+                    *left.clone(),
+                    group_by,
+                    aggregates,
+                    agg_schema,
+                )),
+                op: op.clone(),
+                right: Box::new(rewrite_for_agg_output(
+                    *right.clone(),
+                    group_by,
+                    aggregates,
+                    agg_schema,
+                )),
+            },
+        },
+
+        BoundExprKind::UnaryOp { op, expr: inner } => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::UnaryOp {
+                op: op.clone(),
+                expr: Box::new(rewrite_for_agg_output(
+                    *inner.clone(),
+                    group_by,
+                    aggregates,
+                    agg_schema,
+                )),
+            },
+        },
+
+        BoundExprKind::Cast {
+            expr: inner,
+            target_type,
+        } => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::Cast {
+                expr: Box::new(rewrite_for_agg_output(
+                    *inner.clone(),
+                    group_by,
+                    aggregates,
+                    agg_schema,
+                )),
+                target_type: *target_type,
+            },
+        },
+
+        BoundExprKind::IsNull(inner) => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::IsNull(Box::new(rewrite_for_agg_output(
+                *inner.clone(),
+                group_by,
+                aggregates,
+                agg_schema,
+            ))),
+        },
+
+        BoundExprKind::IsNotNull(inner) => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::IsNotNull(Box::new(rewrite_for_agg_output(
+                *inner.clone(),
+                group_by,
+                aggregates,
+                agg_schema,
+            ))),
+        },
+
+        _ => expr,
+    }
+}
+
+fn rewrite_to_projection_output(expr: BoundExpr, proj_exprs: &[BoundExpr]) -> BoundExpr {
+    for (proj_pos, proj_expr) in proj_exprs.iter().enumerate() {
+        if exprs_structurally_equal(&expr, proj_expr) {
+            return BoundExpr {
+                data_type: expr.data_type,
+                nullable: expr.nullable,
+                kind: BoundExprKind::ColumnRef(BoundColumnRef {
+                    qualifier: None,
+                    column_name: format!("col_{}", proj_pos),
+                    scope_index: proj_pos,
+                }),
+            };
+        }
+    }
+
+    match expr.kind {
+        BoundExprKind::BinaryOp { left, op, right } => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::BinaryOp {
+                left: Box::new(rewrite_to_projection_output(*left, proj_exprs)),
+                op,
+                right: Box::new(rewrite_to_projection_output(*right, proj_exprs)),
+            },
+        },
+        BoundExprKind::UnaryOp { op, expr: inner } => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: BoundExprKind::UnaryOp {
+                op,
+                expr: Box::new(rewrite_to_projection_output(*inner, proj_exprs)),
+            },
+        },
+        other => BoundExpr {
+            data_type: expr.data_type,
+            nullable: expr.nullable,
+            kind: other,
+        },
+    }
+}
+
+fn exprs_structurally_equal(a: &BoundExpr, b: &BoundExpr) -> bool {
+    match (&a.kind, &b.kind) {
+        (BoundExprKind::ColumnRef(ca), BoundExprKind::ColumnRef(cb)) => {
+            ca.scope_index == cb.scope_index
+        }
+        (BoundExprKind::Literal(la), BoundExprKind::Literal(lb)) => {
+            format!("{:?}", la) == format!("{:?}", lb)
+        }
+        (BoundExprKind::Function(fa), BoundExprKind::Function(fb)) => {
+            fa.kind == fb.kind
+                && fa.distinct == fb.distinct
+                && fa.args.len() == fb.args.len()
+                && fa
+                    .args
+                    .iter()
+                    .zip(fb.args.iter())
+                    .all(|(x, y)| exprs_structurally_equal(x, y))
+        }
+        (
+            BoundExprKind::BinaryOp {
+                left: la,
+                op: oa,
+                right: ra,
+            },
+            BoundExprKind::BinaryOp {
+                left: lb,
+                op: ob,
+                right: rb,
+            },
+        ) => oa == ob && exprs_structurally_equal(la, lb) && exprs_structurally_equal(ra, rb),
+        _ => false,
+    }
+}
+
 fn merge_schemas(left: &Schema, right: &Schema) -> Schema {
     let mut cols = left.columns.clone();
     cols.extend(right.columns.iter().cloned());
@@ -331,7 +584,16 @@ fn collect_aggregates(
 fn collect_agg_from_expr(expr: &BoundExpr, alias: &str, out: &mut Vec<AggregateExpr>) {
     match &expr.kind {
         BoundExprKind::Function(f) if f.kind.is_aggregate() => {
-            let already = out.iter().any(|a| a.alias == alias);
+            let already = out.iter().any(|a| {
+                a.alias == alias
+                    && a.kind == f.kind
+                    && a.distinct == f.distinct
+                    && match (&a.arg, f.args.first()) {
+                        (None, None) => true,
+                        (Some(ae), Some(fe)) => exprs_structurally_equal(ae, fe),
+                        _ => false,
+                    }
+            });
             if !already {
                 out.push(AggregateExpr {
                     kind: f.kind.clone(),
