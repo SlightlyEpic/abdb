@@ -36,17 +36,28 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
 
     pub fn bind(&self, stmt: Statement) -> BindResult<BoundStatement> {
         match stmt {
-            Statement::CreateTable(s) => self.bind_create_table(s),
-            Statement::DropTable(s) => self.bind_drop_table(s),
-            Statement::AlterTable(s) => self.bind_alter_table(s),
+            // DDL: Table
+            Statement::CreateTable(s)   => self.bind_create_table(s),
+            Statement::DropTable(s)     => self.bind_drop_table(s),
+            Statement::AlterTable(s)    => self.bind_alter_table(s),
+            
+             // DDL: Index
+            Statement::CreateIndex(s) => self.bind_create_index(s),
+            Statement::DropIndex(s)   => self.bind_drop_index(s),
+
+            // DML
             Statement::Insert(s) => self.bind_insert(s),
             Statement::Select(s) => Ok(BoundStatement::Select(self.bind_select(s)?)),
             Statement::Update(s) => self.bind_update(s),
             Statement::Delete(s) => self.bind_delete(s),
-            Statement::CreateIndex(s) => self.bind_create_index(s),
-            Statement::DropIndex(s) => self.bind_drop_index(s),
-            Statement::Explain(inner) => Ok(BoundStatement::Explain(Box::new(self.bind(*inner)?))),
-            _ => unreachable!()
+
+            // Misc
+             Statement::Explain(inner) => Ok(BoundStatement::Explain(Box::new(self.bind(*inner)?))),
+
+            // These are handled in Session::execute_sql and never passed to the binder.
+            Statement::BeginTransaction(_)  => unreachable!(),
+            Statement::Commit               => unreachable!(),
+            Statement::Rollback             => unreachable!(),
         }
     }
 
