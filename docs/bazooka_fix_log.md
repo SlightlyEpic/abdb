@@ -70,13 +70,44 @@ until the next eviction or `flush_all_dirty` — a `kill` mid-session destroyed 
 
 ---
 
+## Devel-branch follow-up fixes
+
+After bazooka merged into `devel`, a second pass picked up the open issues
+that were safe to land without touching the accessor/disk-manager split.
+
+### 9. Graceful shutdown signal handler
+SIGINT/SIGTERM previously dropped the process mid-statement. Per-statement
+flush bounded the blast radius but anything dirty at the moment of the
+signal (e.g. a long-running multi-row INSERT) was lost.
+- [src/server/tcp.rs](src/server/tcp.rs): `TcpServer::flush()` exposes
+  `accessor.flush()`.
+- [src/main.rs](src/main.rs): `tokio::select!` between `server.listen()`
+  and a `shutdown_signal()` helper that races SIGINT/SIGTERM on unix and
+  `ctrl_c()` elsewhere. On trigger, `server.flush().await` runs before exit.
+- [Cargo.toml](Cargo.toml): tokio `signal` feature added.
+
+### 10. `load_catalog` user-oid filter clarity
+Was `oid > SYS_TABLE_INDEXES_OID` (= 2). Correct but brittle — a new sys
+table OID = 3 would need to touch every `>2` check. Replaced with an
+explicit `USER_OID_START` constant and `oid >= USER_OID_START` comparisons.
+- [src/common/constants.rs](src/common/constants.rs): `USER_OID_START = 1000`.
+- [src/db.rs](src/db.rs): both filters in `load_catalog` now use it.
+
+### 11. `DIRECTORY_FILE_ID` collision with `SYS_TABLE_COLUMNS_FID`
+The constant was `= 1`, same as `SYS_TABLE_COLUMNS_FID`. Unused today but a
+latent footgun for the directory-as-file work. Changed to `u32::MAX` sentinel.
+- [src/common/constants.rs](src/common/constants.rs).
+
+### 12. Dead `let join_kind = join.kind.clone();` in binder
+Previously flagged as a "borrow-after-move" but `JoinKind` is `Copy`, so
+the clone was actually just dead — the variable was never read. Removed.
+- [src/binder/binder.rs](src/binder/binder.rs) ~L463.
+
+---
+
 ## Open / latent issues not fixed on this branch
 
 ### Correctness / durability
-- **No graceful shutdown.** SIGTERM/SIGINT drop anything dirty mid-statement
-  (e.g. a long-running INSERT ... SELECT). Per-statement flush minimizes
-  exposure but doesn't eliminate it. Should install a `tokio::signal` handler
-  in `main.rs` that calls `accessor.flush()` before exit.
 - **`load_catalog` bypass is a hack.** `txn.id = u64::MAX` sees every tuple
   regardless of commit status. Fine today, breaks the moment transactions
   can abort.
@@ -116,16 +147,52 @@ until the next eviction or `flush_all_dirty` — a `kill` mid-session destroyed 
   call `register_file`. Should return an error.
 - **`executor/execute.rs` is 1113 lines**, over the 500-line guideline in
   [CLAUDE.md](CLAUDE.md). Split by operator.
-- **Pre-existing: `binder/binder.rs` borrow-after-move ~L469** on
-  `join.kind`. Unrelated to persistence but tripping on the bazooka branch.
-
 ### Minor
-- Welcome/prompt writing in [src/server/tcp.rs](src/server/tcp.rs) is
-  inconsistent — empty input writes `"abdb>"` without newline, non-empty
-  writes `"\n...\n\nabdb> "`.
-- `load_catalog` filter `oid > SYS_TABLE_INDEXES_OID` should be
-  `oid >= USER_OID_START` for clarity (user OIDs start at 1000 per
-  `SessionOidAllocator`).
+- Welcome/prompt spacing in [src/server/tcp.rs](src/server/tcp.rs) was made
+  consistent in a separate commit on devel.
+
+---
+
+## Still to be implemented (larger work)
+
+These are not small fixes — they need design + refactoring and are tracked
+here so nobody reopens them as "open issues".
+
+- **Write-Ahead Log (WAL).** Per-statement `flush_all_dirty` is O(dirty
+  frames) per query. Real fix: log records + group commit + crash
+  recovery. Removes the need for coarse flushes, the `load_catalog`
+  `u64::MAX` bypass, and the startup `max_xmin` scan all at once.
+- **Persistent transaction counter.** Today we rebuild `next_txn_id` on
+  startup by scanning every heap file for `max(xmin)`. Needs a metadata
+  file (or WAL header) that stores the last handed-out txn id and is
+  updated periodically.
+- **`fetch_page_at_loc_write` lpage_id=0 leak.** The buffer-pool frame for
+  a freshly-`init_page_at_loc`'d page is published with `lpage_id=0`
+  because the caller hasn't written the real header yet. Currently
+  invisible, but it's a trap. Fix needs either an explicit hint parameter
+  or a `set_lpage_id(frame_idx, id)` method — either way it's a buffer-pool
+  API change, not a local patch.
+- **`storage/disk.rs::get_file` default-to-Heap.** Returning an error on
+  unknown file_ids would be correct but requires first wiring
+  `register_file` into the accessor-side DDL path so user tables (and
+  eventually indexes) announce their type up front. Accessor doesn't hold
+  a `DiskManager` handle today; adding one is a small refactor but crosses
+  module boundaries, so deferred.
+- **Accessor encapsulation hole.** `heap::{scan,insert,get,delete,max_xmin}`
+  are `pub` so `db.rs` can reach them. Either move `db.rs` into the
+  `accessor` module or funnel these calls through the `Accessor` trait.
+- **DDL duplication.** `AccessorImpl::create_table` and
+  `db::persist_create_table` + `insert_sys_{table,column}_record` both
+  encode the same sys-table tuples. Drift hazard. Collapse to one.
+- **`executor/execute.rs` split.** 1113 lines, over the 500-line guideline.
+  Split by operator into `executor/ops/*.rs`.
+- **Graceful shutdown beyond signals.** The signal handler flushes once,
+  but a panic inside the listener task still drops dirty state. Needs a
+  panic hook + supervised task restart, or explicit shutdown ordering.
+- **Marker-file ordering.** `.abdb_init_marker` is still written before
+  the first post-bootstrap flush is verified. On a crash between bootstrap
+  and first statement the DB looks initialized but has no catalog rows.
+  Move the marker write to after the first successful flush.
 
 ---
 

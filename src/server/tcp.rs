@@ -69,6 +69,13 @@ impl TcpServer {
         }
     }
 
+    /// Flush any dirty state to disk. Called on graceful shutdown.
+    pub async fn flush(&self) {
+        if let Err(e) = self.accessor.flush().await {
+            eprintln!("Error flushing accessor on shutdown: {:?}", e);
+        }
+    }
+
     pub async fn listen(self: Arc<Self>) {
         let host = "127.0.0.1";
         let port = self.config.port;

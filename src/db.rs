@@ -251,7 +251,7 @@ pub async fn load_catalog<B: BufferPool>(
             .unwrap_or(0);
 
         // Skip system tables (already in catalog cache)
-        if oid > constants::SYS_TABLE_INDEXES_OID {
+        if oid >= constants::USER_OID_START {
             user_tables.push(Table {
                 oid,
                 name: Cow::Owned(name),
@@ -299,7 +299,7 @@ pub async fn load_catalog<B: BufferPool>(
             .unwrap_or(false);
 
         // Skip system table columns
-        if table_oid > constants::SYS_TABLE_INDEXES_OID {
+        if table_oid >= constants::USER_OID_START {
             user_columns.push(Column {
                 oid,
                 table_oid,
