@@ -16,6 +16,7 @@ pub enum BoundStatement {
     Delete(BoundDelete),
     CreateIndex(BoundCreateIndex),
     DropIndex(BoundDropIndex),
+    DescribeTable(catalog::Table, Vec<catalog::Column>),
     Explain(Box<BoundStatement>),
 }
 

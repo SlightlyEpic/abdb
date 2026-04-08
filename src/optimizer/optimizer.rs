@@ -199,6 +199,7 @@ impl<A: Accessor> Optimizer<A> {
             LogicalPlan::AlterTable(s) => Ok(PhysicalPlan::AlterTable(s)),
             LogicalPlan::CreateIndex(s) => Ok(PhysicalPlan::CreateIndex(s)),
             LogicalPlan::DropIndex(s) => Ok(PhysicalPlan::DropIndex(s)),
+            LogicalPlan::DescribeTable(t, c) => Ok(PhysicalPlan::DescribeTable(t, c)),
 
             LogicalPlan::Values(v) => Ok(PhysicalPlan::Values(PhysValues {
                 rows: v.rows,

@@ -44,6 +44,14 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
              // DDL: Index
             Statement::CreateIndex(s) => self.bind_create_index(s),
             Statement::DropIndex(s)   => self.bind_drop_index(s),
+            Statement::DescribeTable(name) => {
+                let table = self.accessor.catalog_get_table_by_name(self.txn, &name)
+                    .map_err(|_| BindError::UnknownTable(name.clone()))?;
+                let mut columns = self.accessor.catalog_get_table_columns(self.txn, table.oid)
+                    .map_err(|e| BindError::CatalogError(format!("{:?}", e)))?;
+                columns.sort_by_key(|c| c.position);
+                Ok(BoundStatement::DescribeTable(table, columns))
+            }
 
             // DML
             Statement::Insert(s) => self.bind_insert(s),

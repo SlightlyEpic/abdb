@@ -24,10 +24,11 @@ pub enum Statement {
     Select(SelectStmt),
     Update(UpdateStmt),
     Delete(DeleteStmt),
-
+    
     CreateIndex(CreateIndexStmt),
     DropIndex(DropIndexStmt),
-
+    
+    DescribeTable(String),
     Explain(Box<Statement>),
 }
 

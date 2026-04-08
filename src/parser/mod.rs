@@ -170,6 +170,11 @@ fn translate_statement(stmt: sq::Statement) -> Result<Statement> {
             let inner = translate_statement(*statement)?;
             Ok(Statement::Explain(Box::new(inner)))
         }
+        
+        sq::Statement::ExplainTable { table_name, .. } => {
+            let name = table_name.to_string();
+            Ok(Statement::DescribeTable(name))
+        }
 
         other => Err(DbError::Parse(format!(
             "unsupported statement: {:?}",

@@ -138,6 +138,29 @@ pub fn execute<'a, A: Accessor + 'a>(
                 Ok(ExecutionResult::Ok(format!("DROP INDEX {}", di.name)))
             }
 
+            PhysicalPlan::DescribeTable(_table, columns) => {
+                let out_cols = vec![
+                    "column_name".to_string(), 
+                    "type".to_string(), 
+                    "nullable".to_string()
+                ];
+                
+                let mut rows = Vec::new();
+                for col in columns {
+                    // Hide soft-dropped columns!
+                    if col.name.starts_with("__abdb_dropped_") {
+                        continue;
+                    }
+                    rows.push(Tuple::new(vec![
+                        Value::String(col.name.to_string()),
+                        Value::String(col.type_id.to_string()),
+                        Value::Bool(col.nullable),
+                    ]));
+                }
+                
+                Ok(ExecutionResult::Rows { columns: out_cols, rows })
+            }
+
             // Query operations
             PhysicalPlan::Values(values) => {
                 let columns = values
