@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use sqlparser::keywords::FORMAT;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
@@ -45,7 +44,7 @@ impl TcpServer {
         ));
         let accessor = Arc::new(AccessorImpl::new(Arc::clone(&buffer_pool)));
 
-        if needs_bootstrap {
+        let max_xmin = if needs_bootstrap {
             println!("Initializing new database...");
             db::bootstrap_database(&*buffer_pool, &*disk_manager, &accessor)
                 .await
@@ -53,18 +52,20 @@ impl TcpServer {
             db::write_marker_file(&config.data_dir)
                 .expect("Failed to write database marker file");
             println!("Database initialized successfully.");
+            0
         } else {
             println!("Loading existing database...");
-            db::load_catalog(&*buffer_pool, &accessor)
+            let x = db::load_catalog(&*buffer_pool, &accessor)
                 .await
                 .expect("Failed to load catalog");
-            println!("Catalog loaded successfully.");
-        }
+            println!("Catalog loaded successfully. max_xmin={}", x);
+            x
+        };
 
         Self {
             config,
             accessor,
-            txn_manager: Arc::new(TransactionManager::new()),
+            txn_manager: Arc::new(TransactionManager::with_next_txn_id(max_xmin + 1)),
         }
     }
 

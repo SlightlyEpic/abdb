@@ -146,6 +146,17 @@ impl Session {
             // 4. Execute
             let result = executor::execute(physical, self.accessor.as_ref(), txn).await?;
 
+            // 5. Flush on any mutation so state survives a kill before WAL exists.
+            if matches!(
+                result,
+                ExecutionResult::RowsAffected(_) | ExecutionResult::Ok(_)
+            ) {
+                self.accessor
+                    .flush()
+                    .await
+                    .map_err(|e| DbError::Internal(format!("flush failed: {:?}", e)))?;
+            }
+
             // Format result
             Ok(format_result(result))
         }

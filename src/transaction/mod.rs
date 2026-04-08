@@ -74,8 +74,12 @@ pub struct TransactionManager {
 
 impl TransactionManager {
     pub fn new() -> Self {
+        Self::with_next_txn_id(1)
+    }
+
+    pub fn with_next_txn_id(next_txn_id: TxnId) -> Self {
         Self {
-            next_txn_id: AtomicU64::new(1),
+            next_txn_id: AtomicU64::new(next_txn_id),
             current_ts: AtomicU64::new(0),
             active_txns: RwLock::new(HashSet::new()),
         }

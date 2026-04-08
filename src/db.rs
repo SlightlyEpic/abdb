@@ -39,29 +39,29 @@ pub async fn init_heap_file<B: BufferPool>(
     file_id: FileId,
     table_oid: OId,
 ) -> Result<()> {
-    // Get write access to the header page at offset 0
     let header_loc = PPageId {
         file: file_id,
         offset: 0,
     };
+
+    // Allocate a real LPageId for the header, register in directory, and
+    // zero-extend the file on disk so the buffer pool can fetch it safely.
+    let header_lpage_id = bp
+        .init_page_at_loc(header_loc)
+        .await
+        .map_err(|e| DbError::Internal(format!("failed to init header loc: {:?}", e)))?;
 
     let mut guard = bp
         .fetch_page_at_loc_write(header_loc)
         .await
         .map_err(|e| DbError::Internal(format!("failed to fetch header page: {:?}", e)))?;
 
-    // Initialize the header page
-    // The guard gives us mutable access to the page buffer
     let buffer = &mut *guard;
-
-    // Initialize in place - HeapFileHeaderPage::init expects ownership but we have a mutable slice
-    // We need to initialize the buffer directly
     buffer.fill(0);
 
-    // Create a temporary owned buffer, initialize it, then copy back
     let temp_buffer = HeapFileHeaderPage::init(
         [0u8; constants::PAGE_BUF_SIZE],
-        0, // page_id for header is 0
+        header_lpage_id,
         table_oid,
     );
     buffer.copy_from_slice(temp_buffer.as_buffer());
@@ -190,16 +190,37 @@ async fn insert_sys_column_record<B: BufferPool>(
 
 /// Load catalog from system tables into the accessor's catalog cache.
 ///
-/// This scans sys_tables, sys_columns, and sys_indexes to rebuild the in-memory catalog.
+/// Returns the maximum `xmin` seen across all loaded heap files so the
+/// caller can initialize the transaction manager's next_txn_id above it
+/// (txn ids are not currently persisted, so we reconstruct a safe high
+/// watermark at load time).
 pub async fn load_catalog<B: BufferPool>(
     bp: &B,
     accessor: &AccessorImpl<B>,
-) -> Result<()> {
+) -> Result<crate::common::aliases::TxnId> {
     use futures::StreamExt;
     use std::pin::pin;
 
+    let mut max_xmin: crate::common::aliases::TxnId = 0;
+    // Scan sys_* and every user table/index file for max xmin once loaded.
+    for sys_fid in [
+        constants::SYS_TABLE_TABLES_FID,
+        constants::SYS_TABLE_COLUMNS_FID,
+        constants::SYS_TABLE_INDEXES_FID,
+    ] {
+        let x = heap::max_xmin(bp, sys_fid)
+            .await
+            .map_err(|e| DbError::Internal(format!("max_xmin sys fid {}: {:?}", sys_fid, e)))?;
+        if x > max_xmin {
+            max_xmin = x;
+        }
+    }
+
+    // Use a "read everything" txn so that user tables created in prior
+    // sessions (inserted with xmin >= 1) pass the visibility check
+    // `xmin <= txn.id`.
     let txn = Txn {
-        id: 0,
+        id: u64::MAX,
         isolation: crate::common::txn::IsolationLevel::Snapshot,
     };
 
@@ -333,9 +354,11 @@ pub async fn load_catalog<B: BufferPool>(
         });
     }
 
-    // Register user tables and their columns in the accessor
+    // Register user tables and their columns in the accessor. Also fold
+    // their max xmin into the watermark.
     for table in user_tables {
         let table_oid = table.oid;
+        let file_id = table.file_id;
         let cols: Vec<Column> = user_columns
             .iter()
             .filter(|c| c.table_oid == table_oid)
@@ -345,6 +368,13 @@ pub async fn load_catalog<B: BufferPool>(
         accessor
             .register_table(table, cols)
             .map_err(|e| DbError::Internal(format!("failed to register table: {:?}", e)))?;
+
+        let x = heap::max_xmin(bp, file_id)
+            .await
+            .map_err(|e| DbError::Internal(format!("max_xmin fid {}: {:?}", file_id, e)))?;
+        if x > max_xmin {
+            max_xmin = x;
+        }
     }
 
     // Register user indexes
@@ -354,7 +384,7 @@ pub async fn load_catalog<B: BufferPool>(
             .map_err(|e| DbError::Internal(format!("failed to register index: {:?}", e)))?;
     }
 
-    Ok(())
+    Ok(max_xmin)
 }
 
 /// Write the database marker file to indicate initialization is complete.

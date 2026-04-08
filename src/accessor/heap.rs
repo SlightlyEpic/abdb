@@ -139,6 +139,55 @@ pub async fn scan<'a, B: BufferPool>(
     }))
 }
 
+/// Walk every live tuple in a heap file and return the maximum `xmin`.
+/// Used at startup to reconstruct the transaction-manager high watermark.
+pub async fn max_xmin<B: BufferPool>(
+    bp: &B,
+    file_id: FileId,
+) -> Result<crate::common::aliases::TxnId> {
+    let header_loc = PPageId { file: file_id, offset: 0 };
+    let guard = bp
+        .fetch_page_at_loc_read(header_loc)
+        .await
+        .map_err(Error::BufferError)?;
+    let header_page = HeapFileHeaderPage::new(&*guard);
+    let mut current_page = header_page
+        .data()
+        .map_err(|_| Error::PageCorruption("heap file header unreadable".into()))?
+        .first_page;
+    drop(guard);
+
+    let mut max: crate::common::aliases::TxnId = 0;
+    while current_page != 0 {
+        let guard = bp
+            .fetch_page_read(current_page)
+            .await
+            .map_err(Error::BufferError)?;
+        let page = HeapPage::new(&*guard);
+        let header = page
+            .header()
+            .map_err(|_| Error::PageCorruption("heap page header unreadable".into()))?;
+        let num_slots = header.num_slots;
+        let next_page = header.next_page;
+        for slot in 0..num_slots {
+            let data = match page.get_data(slot as usize) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            if data.len() < visibility::TUPLE_HEADER_SIZE {
+                continue;
+            }
+            let xmin = visibility::read_xmin(data);
+            if xmin > max {
+                max = xmin;
+            }
+        }
+        drop(guard);
+        current_page = next_page;
+    }
+    Ok(max)
+}
+
 // ============================================================================
 // TABLE INSERT
 // ============================================================================

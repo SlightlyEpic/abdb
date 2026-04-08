@@ -67,6 +67,18 @@ pub trait DiskManager: Send + Sync + 'static {
         &self,
         file_id: aliases::FileId,
     ) -> impl Future<Output = Result<(aliases::LPageId, aliases::PPageId)>> + '_ + Send;
+
+    /// Flush storage metadata (e.g. page directory) to disk.
+    fn flush_metadata(&self) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    /// Pre-initialize a physical page location by allocating an LPageId,
+    /// registering the mapping in the page directory, and writing a zero page
+    /// to disk so subsequent reads succeed. Used to create file-header pages
+    /// at a known physical location (typically offset 0 of a fresh heap file).
+    fn init_page_at_loc(
+        &self,
+        loc: aliases::PPageId,
+    ) -> impl Future<Output = Result<aliases::LPageId>> + '_ + Send;
 }
 
 // ============================================================================
@@ -252,19 +264,7 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
         async move {
             let file = self.get_file(loc.file)?;
 
-            // Try to read the page. If the file is too short (new file),
-            // fill with zeros instead of failing.
-            tokio::task::block_in_place(|| {
-                match file.read_exact_at(target, loc.offset) {
-                    Ok(()) => Ok(()),
-                    Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                        // New file or page beyond current size - initialize with zeros
-                        target.fill(0);
-                        Ok(())
-                    }
-                    Err(e) => Err(e),
-                }
-            })?;
+            tokio::task::block_in_place(|| file.read_exact_at(target, loc.offset))?;
 
             Ok(())
         }
@@ -299,6 +299,33 @@ impl<D: directory::PageDirectory, A: allocator::PageAllocator> DiskManager
             self.page_directory.add_page(lpage_id, ppage_id).await?;
 
             Ok((lpage_id, ppage_id))
+        }
+    }
+
+    fn flush_metadata(&self) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            self.page_directory.flush_all_dirty().await?;
+            Ok(())
+        }
+    }
+
+    fn init_page_at_loc(
+        &self,
+        loc: PPageId,
+    ) -> impl Future<Output = Result<LPageId>> + '_ + Send {
+        async move {
+            // Allocate a fresh logical page id for this physical location.
+            let lpage_id = self.alloc_lpage_id();
+
+            // Register the mapping so future logical fetches resolve.
+            self.page_directory.add_page(lpage_id, loc).await?;
+
+            // Physically extend the file with a zero page so subsequent
+            // reads do not EOF. Direct write to avoid buffer-pool recursion.
+            let zero = [0u8; crate::common::constants::PAGE_BUF_SIZE];
+            self.write_page_at_loc(loc, &zero).await?;
+
+            Ok(lpage_id)
         }
     }
 }

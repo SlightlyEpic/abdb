@@ -244,7 +244,9 @@ impl<D: DiskManager> BufferPool<D> {
 
     /// SAFETY: Caller must ensure exclusive access (Write Latch) to the specific frame.
     unsafe fn frame_buf_mut(&self, frame_idx: usize) -> *mut aliases::PageBuffer {
-        let base_ptr = self.buf.get() as *mut u8;
+        // SAFETY: self.buf.get() yields *mut AlignedBuffer; we need the
+        // underlying aligned data pointer, not the struct address.
+        let base_ptr = unsafe { (*self.buf.get()).as_ptr() };
         let start_offset = frame_idx * constants::PAGE_BUF_SIZE;
         let offset_ptr = unsafe { base_ptr.add(start_offset) };
 
@@ -253,7 +255,7 @@ impl<D: DiskManager> BufferPool<D> {
 
     /// SAFETY: Caller must ensure at least shared access (Read Latch) to the specific frame.
     unsafe fn frame_buf(&self, frame_idx: usize) -> *const aliases::PageBuffer {
-        let base_ptr = self.buf.get() as *const u8;
+        let base_ptr = unsafe { (*self.buf.get()).as_ptr() as *const u8 };
         let start_offset = frame_idx * constants::PAGE_BUF_SIZE;
         let offset_ptr = unsafe { base_ptr.add(start_offset) };
 
@@ -763,6 +765,18 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
         }
     }
 
+    fn init_page_at_loc(
+        &self,
+        loc: aliases::PPageId,
+    ) -> impl Future<Output = buffer::Result<aliases::LPageId>> + Send + '_ {
+        async move {
+            self.disk_manager
+                .init_page_at_loc(loc)
+                .await
+                .map_err(|e| buffer::Error::StorageError(e))
+        }
+    }
+
     fn flush_all_dirty(&self) -> impl Future<Output = buffer::Result<()>> + Send + '_ {
         async move {
             // Collect dirty frames to avoid holding the meta lock during I/O
@@ -818,6 +832,13 @@ impl<D: DiskManager> buffer::BufferPool for BufferPool<D> {
                     }
                 }
             }
+
+            // Also flush storage metadata (page directory) so LPageId→PPageId
+            // mappings created during this session are durable on restart.
+            self.disk_manager
+                .flush_metadata()
+                .await
+                .map_err(|e| buffer::Error::StorageError(e))?;
 
             Ok(())
         }

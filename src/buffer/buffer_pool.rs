@@ -66,5 +66,15 @@ pub trait BufferPool: Send + Sync + 'static {
         &self,
         file_id: aliases::FileId,
     ) -> impl Future<Output = Result<Self::WriteGuard<'_>>> + Send + '_;
+
+    /// Pre-initialize a fresh physical page location by allocating an LPageId
+    /// in the page directory and writing a zero page to disk. Returns the
+    /// newly-allocated LPageId. The caller can then safely call
+    /// `fetch_page_at_loc_write` to overwrite the page with real content.
+    fn init_page_at_loc(
+        &self,
+        loc: aliases::PPageId,
+    ) -> impl Future<Output = Result<aliases::LPageId>> + Send + '_;
+
     fn flush_all_dirty(&self) -> impl Future<Output = Result<()>> + Send + '_;
 }

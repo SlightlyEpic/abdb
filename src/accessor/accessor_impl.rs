@@ -46,6 +46,11 @@ impl<B: BufferPool> AccessorImpl<B> {
         }
     }
 
+    /// Flush all dirty pages (and storage metadata) to disk.
+    pub async fn flush(&self) -> Result<()> {
+        self.bp.flush_all_dirty().await.map_err(Error::BufferError)
+    }
+
     /// Register a user-created table in the catalog cache.
     ///
     /// Returns an error if a table with the same OID is already registered.
@@ -263,19 +268,25 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                 offset: 0,
             };
 
+            // Allocate LPageId, register directory mapping, zero-extend file.
+            let header_lpage_id = self
+                .bp
+                .init_page_at_loc(header_loc)
+                .await
+                .map_err(Error::BufferError)?;
+
             let mut guard = self
                 .bp
                 .fetch_page_at_loc_write(header_loc)
                 .await
                 .map_err(Error::BufferError)?;
 
-            // Initialize the header page
             let buffer = &mut *guard;
             buffer.fill(0);
 
             let temp_buffer = HeapFileHeaderPage::init(
                 [0u8; PAGE_BUF_SIZE],
-                0,
+                header_lpage_id,
                 table_oid,
             );
             buffer.copy_from_slice(temp_buffer.as_buffer());
@@ -319,7 +330,7 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                 crate::databox::Value::U32(file_id),
             ];
 
-            let mut tuple_bytes = sys_tables_layout.encode_tuple(&sys_tables_cols, &sys_tables_vals);
+            let tuple_bytes = sys_tables_layout.encode_tuple(&sys_tables_cols, &sys_tables_vals);
 
             heap::insert(
                 &*self.bp,
@@ -355,6 +366,12 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
                 )
                 .await?;
             }
+
+            // Persist pages + page directory so restart can see the new table.
+            self.bp
+                .flush_all_dirty()
+                .await
+                .map_err(Error::BufferError)?;
 
             Ok(())
         }
