@@ -166,14 +166,16 @@ fn translate_statement(stmt: sq::Statement) -> Result<Statement> {
             }))
         }
 
-        sq::Statement::Explain { statement, .. } => {
-            let inner = translate_statement(*statement)?;
-            Ok(Statement::Explain(Box::new(inner)))
-        }
-        
         sq::Statement::ExplainTable { table_name, .. } => {
             let name = table_name.to_string();
             Ok(Statement::DescribeTable(name))
+        }
+
+        sq::Statement::ShowTables { .. } => Ok(Statement::ShowTables),
+
+        sq::Statement::Explain { statement, .. } => {
+            let inner = translate_statement(*statement)?;
+            Ok(Statement::Explain(Box::new(inner)))
         }
 
         other => Err(DbError::Parse(format!(

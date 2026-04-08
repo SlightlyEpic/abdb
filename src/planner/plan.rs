@@ -64,6 +64,7 @@ pub enum LogicalPlan {
     DropIndex(BoundDropIndex),
 
     DescribeTable(catalog::Table, Vec<catalog::Column>),
+    ShowTables,
 
     // --- Values (inline rows, e.g. INSERT ... VALUES) ---
     Values(Values),
@@ -94,6 +95,7 @@ impl LogicalPlan {
             | LogicalPlan::CreateIndex(_)
             | LogicalPlan::DropIndex(_)
             | LogicalPlan::DescribeTable(_, _)
+            | LogicalPlan::ShowTables
             | LogicalPlan::Nothing => Schema::empty(),
         }
     }

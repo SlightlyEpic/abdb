@@ -175,4 +175,8 @@ impl CatalogCache {
             .cloned()
             .collect())
     }
+
+    pub fn get_all_tables(&self) -> Vec<catalog::Table> {
+        self.tables.values().cloned().collect()
+    }
 }

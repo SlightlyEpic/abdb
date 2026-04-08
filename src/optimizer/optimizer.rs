@@ -195,11 +195,14 @@ impl<A: Accessor> Optimizer<A> {
             LogicalPlan::Nothing => Ok(PhysicalPlan::Nothing),
 
             LogicalPlan::CreateTable(s) => Ok(PhysicalPlan::CreateTable(s)),
-            LogicalPlan::DropTable(s) => Ok(PhysicalPlan::DropTable(s)),
-            LogicalPlan::AlterTable(s) => Ok(PhysicalPlan::AlterTable(s)),
+            LogicalPlan::DropTable(s)   => Ok(PhysicalPlan::DropTable(s)),
+            LogicalPlan::AlterTable(s)  => Ok(PhysicalPlan::AlterTable(s)),
+
             LogicalPlan::CreateIndex(s) => Ok(PhysicalPlan::CreateIndex(s)),
-            LogicalPlan::DropIndex(s) => Ok(PhysicalPlan::DropIndex(s)),
+            LogicalPlan::DropIndex(s)   => Ok(PhysicalPlan::DropIndex(s)),
+
             LogicalPlan::DescribeTable(t, c) => Ok(PhysicalPlan::DescribeTable(t, c)),
+            LogicalPlan::ShowTables          => Ok(PhysicalPlan::ShowTables),
 
             LogicalPlan::Values(v) => Ok(PhysicalPlan::Values(PhysValues {
                 rows: v.rows,

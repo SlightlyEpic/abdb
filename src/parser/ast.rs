@@ -29,6 +29,8 @@ pub enum Statement {
     DropIndex(DropIndexStmt),
     
     DescribeTable(String),
+    ShowTables,
+
     Explain(Box<Statement>),
 }
 

@@ -28,6 +28,7 @@ impl Planner {
             BoundStatement::DropIndex(s) => Ok(LogicalPlan::DropIndex(s)),
 
             BoundStatement::DescribeTable(t, c) => Ok(LogicalPlan::DescribeTable(t, c)),
+            BoundStatement::ShowTables => Ok(LogicalPlan::ShowTables),
 
             BoundStatement::Explain(inner) => Self::plan(*inner),
         }

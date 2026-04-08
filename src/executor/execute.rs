@@ -209,6 +209,35 @@ pub fn execute<'a, A: Accessor + 'a>(
                 Ok(ExecutionResult::Rows { columns: out_cols, rows })
             }
 
+            PhysicalPlan::ShowTables => {
+                let tables = accessor
+                    .catalog_get_all_tables(txn)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+                let out_cols = vec!["table_name".to_string(), "oid".to_string()];
+                let mut rows = Vec::new();
+
+                for table in tables {
+                    if table.oid > crate::common::constants::SYS_TABLE_INDEXES_OID {
+                        rows.push(Tuple::new(vec![
+                            Value::String(table.name.to_string()),
+                            Value::U32(table.oid),
+                        ]));
+                    }
+                }
+
+                rows.sort_by(|a, b| {
+                    let name_a = a.values[0].as_string().unwrap_or_default();
+                    let name_b = b.values[0].as_string().unwrap_or_default();
+                    name_a.cmp(&name_b)
+                });
+
+                Ok(ExecutionResult::Rows {
+                    columns: out_cols,
+                    rows,
+                })
+            }
+
             // Query operations
             PhysicalPlan::Values(values) => {
                 let columns = values

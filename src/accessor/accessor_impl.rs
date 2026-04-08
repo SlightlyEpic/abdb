@@ -246,6 +246,11 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
         cache.get_table_columns(table_oid)
     }
 
+    fn catalog_get_all_tables(&self, _txn: Txn) -> Result<Vec<catalog::Table>> {
+        let cache = self.catalog.read().expect("catalog lock poisoned");
+        Ok(cache.get_all_tables())
+    }
+
     // -- DDL operations --------------------------------------------------------
 
     fn create_table(

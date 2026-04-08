@@ -100,6 +100,9 @@ pub trait Accessor: Send + Sync {
         table_oid: aliases::OId,
     ) -> Result<Vec<catalog::Column>>;
 
+    fn catalog_get_all_tables(&self, txn: Txn) -> Result<Vec<catalog::Table>>;
+
+
     /// Create a new table by initializing its heap file and registering in catalog.
     fn create_table(
         &self,

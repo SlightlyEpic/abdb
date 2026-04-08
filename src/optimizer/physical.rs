@@ -33,6 +33,7 @@ pub enum PhysicalPlan {
     CreateIndex(BoundCreateIndex),
     DropIndex(BoundDropIndex),
     DescribeTable(catalog::Table, Vec<catalog::Column>),
+    ShowTables,
     Nothing,
 }
 
@@ -62,6 +63,7 @@ impl PhysicalPlan {
             | PhysicalPlan::CreateIndex(_)
             | PhysicalPlan::DropIndex(_)
             | PhysicalPlan::DescribeTable(_, _)
+            | PhysicalPlan::ShowTables
             | PhysicalPlan::Nothing => Schema::empty(),
         }
     }

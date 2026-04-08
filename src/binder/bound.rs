@@ -10,13 +10,18 @@ pub enum BoundStatement {
     CreateTable(BoundCreateTable),
     DropTable(BoundDropTable),
     AlterTable(BoundAlterTable),
+    
+    CreateIndex(BoundCreateIndex),
+    DropIndex(BoundDropIndex),
+
     Insert(BoundInsert),
     Select(BoundSelect),
     Update(BoundUpdate),
     Delete(BoundDelete),
-    CreateIndex(BoundCreateIndex),
-    DropIndex(BoundDropIndex),
+
     DescribeTable(catalog::Table, Vec<catalog::Column>),
+    ShowTables,
+
     Explain(Box<BoundStatement>),
 }
 
