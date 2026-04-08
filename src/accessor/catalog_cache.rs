@@ -136,4 +136,10 @@ impl CatalogCache {
             .cloned()
             .ok_or_else(|| Error::NotFound(format!("columns for table oid {}", table_oid)))
     }
+
+    pub fn drop_table(&mut self, name: &str, oid: OId) {
+        self.tables_by_name.remove(name);
+        self.tables.remove(&oid);
+        self.columns.remove(&oid);
+    }
 }

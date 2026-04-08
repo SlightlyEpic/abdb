@@ -376,4 +376,51 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             Ok(())
         }
     }
+
+    fn drop_table(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        table_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send {
+        async move {
+            {
+                let mut cache = self.catalog.write().expect("catalog lock poisoned");
+                cache.drop_table(&table_name, table_oid);
+            }
+
+            use futures::StreamExt;
+
+            let sys_tables_fid = crate::common::constants::SYS_TABLE_TABLES_FID;
+            let tables_layout = crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_TABLES_TABLE.to_vec());
+            let mut tables_stream = std::pin::pin!(heap::scan(&*self.bp, sys_tables_fid, txn).await?);
+
+            while let Some(result) = tables_stream.next().await {
+                let (tuple_bytes, rid) = result?;
+                if let Some(oid) = tables_layout.read_field("oid", 0, &tuple_bytes).and_then(|v| v.as_u32()) {
+                    if oid == table_oid {
+                        heap::delete(&*self.bp, sys_tables_fid, &txn, rid).await?;
+                        break;
+                    }
+                }
+            }
+
+            let sys_columns_fid = crate::common::constants::SYS_TABLE_COLUMNS_FID;
+            let columns_layout = crate::databox::TupleLayout::from(catalog::schema::SYS_COLUMNS_COLUMNS_TABLE.to_vec());
+            let mut columns_stream = std::pin::pin!(heap::scan(&*self.bp, sys_columns_fid, txn).await?);
+
+            while let Some(result) = columns_stream.next().await {
+                let (tuple_bytes, rid) = result?;
+                if let Some(t_oid) = columns_layout.read_field("table_oid", 1, &tuple_bytes).and_then(|v| v.as_u32()) {
+                    if t_oid == table_oid {
+                        heap::delete(&*self.bp, sys_columns_fid, &txn, rid).await?;
+                    }
+                }
+            }
+
+            self.bp.flush_all_dirty().await.map_err(Error::BufferError)?;
+
+            Ok(())
+        }
+    }
 }

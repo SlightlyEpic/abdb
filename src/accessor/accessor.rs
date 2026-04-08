@@ -107,4 +107,11 @@ pub trait Accessor: Send + Sync {
         table: catalog::Table,
         columns: Vec<catalog::Column>,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    fn drop_table(
+        &self,
+        txn: Txn,
+        table_oid: aliases::OId,
+        table_name: String,
+    ) -> impl Future<Output = Result<()>> + '_ + Send;
 }

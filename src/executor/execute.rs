@@ -80,6 +80,14 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::DropTable(dt) => {
+                // Table OID 0 means the table wasn't found but IF EXISTS was used, so we skip deleting
+                if dt.table_oid != 0 {
+                    accessor
+                        .drop_table(txn, dt.table_oid, dt.name.clone())
+                        .await
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                }
+                
                 Ok(ExecutionResult::Ok(format!("DROP TABLE {}", dt.name)))
             }
 
