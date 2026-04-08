@@ -159,6 +159,10 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
 
         let action = match stmt.action {
             AlterTableAction::AddColumn(col_def) => {
+                if columns.iter().any(|c| c.name.eq_ignore_ascii_case(&col_def.name)) {
+                    return Err(BindError::DuplicateName(col_def.name.clone()));
+                }
+
                 let position = columns.len() as u16;
                 let default = col_def
                     .default
@@ -187,6 +191,10 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
                 }
             }
             AlterTableAction::RenameColumn { old, new } => {
+                if columns.iter().any(|c| c.name.eq_ignore_ascii_case(&new)) {
+                    return Err(BindError::DuplicateName(new.clone()));
+                }
+
                 let col = columns
                     .iter()
                     .find(|c| c.name.eq_ignore_ascii_case(&old))
