@@ -183,11 +183,7 @@ impl TupleLayout {
         true
     }
 
-    pub fn encode_tuple(
-        &self,
-        columns: &[&str],
-        values: &[Value],
-    ) -> Vec<u8> {
+    pub fn encode_tuple(&self, columns: &[&str], values: &[Value]) -> Vec<u8> {
         assert_eq!(columns.len(), values.len(), "Columns and values must match");
 
         let mut heap_size = 0;
@@ -212,14 +208,13 @@ impl TupleLayout {
                 Value::String(s) => {
                     let len = s.len();
                     let bytes = s.as_bytes();
-                    
-                    tuple[current_heap_offset..current_heap_offset + len]
-                        .copy_from_slice(bytes);
+
+                    tuple[current_heap_offset..current_heap_offset + len].copy_from_slice(bytes);
 
                     let fixed_offset = *self.offsets.get(col_name).unwrap() as usize;
                     let len_bytes = (len as u16).to_le_bytes();
                     let off_bytes = (current_heap_offset as u16).to_le_bytes();
-                    
+
                     tuple[fixed_offset..fixed_offset + 2].copy_from_slice(&len_bytes);
                     tuple[fixed_offset + 2..fixed_offset + 4].copy_from_slice(&off_bytes);
 
@@ -271,6 +266,8 @@ mod tests {
                 is_primary_key: false,
                 is_unique: false,
                 default_val: None,
+                xmin: 0,
+                xmax: 0,
             },
             catalog::Column {
                 oid: 2,
@@ -282,6 +279,8 @@ mod tests {
                 is_primary_key: false,
                 is_unique: false,
                 default_val: None,
+                xmin: 0,
+                xmax: 0,
             },
             catalog::Column {
                 oid: 3,
@@ -293,6 +292,8 @@ mod tests {
                 is_primary_key: false,
                 is_unique: false,
                 default_val: None,
+                xmin: 0,
+                xmax: 0,
             },
         ]
     }

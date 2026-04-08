@@ -7,18 +7,24 @@ pub const SYS_TABLE_TABLES: Table = Table {
     oid: constants::SYS_TABLE_TABLES_OID,
     name: Cow::Borrowed("sys_tables"),
     file_id: constants::SYS_TABLE_TABLES_FID,
+    xmin: 0,
+    xmax: 0,
 };
 
 pub const SYS_TABLE_COLUMNS: Table = Table {
     oid: constants::SYS_TABLE_COLUMNS_OID,
     name: Cow::Borrowed("sys_columns"),
     file_id: constants::SYS_TABLE_COLUMNS_FID,
+    xmin: 0,
+    xmax: 0,
 };
 
 pub const SYS_TABLE_INDEXES: Table = Table {
     oid: constants::SYS_TABLE_INDEXES_OID,
     name: Cow::Borrowed("sys_indexes"),
     file_id: constants::SYS_TABLE_INDEXES_FID,
+    xmin: 0,
+    xmax: 0,
 };
 
 pub const SYS_INDEX_STUB: Index = Index {
@@ -27,6 +33,8 @@ pub const SYS_INDEX_STUB: Index = Index {
     table_oid: 0,
     file_id: 0,
     column_oid: 0,
+    xmin: 0,
+    xmax: 0,
 };
 
 pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
@@ -40,6 +48,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 01,
@@ -51,6 +61,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 02,
@@ -62,6 +74,8 @@ pub const SYS_COLUMNS_TABLES_TABLE: &[Column] = &[
         is_primary_key: false,
         default_val: None,
         nullable: false,
+        xmin: 0,
+        xmax: 0,
     },
 ];
 
@@ -76,6 +90,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 11,
@@ -87,6 +103,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 12,
@@ -98,6 +116,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 13,
@@ -109,6 +129,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 14,
@@ -120,6 +142,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 15,
@@ -131,6 +155,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 16,
@@ -142,6 +168,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 17,
@@ -153,6 +181,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 18,
@@ -164,6 +194,8 @@ pub const SYS_COLUMNS_COLUMNS_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
 ];
 
@@ -178,6 +210,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 21,
@@ -189,6 +223,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 22,
@@ -200,6 +236,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 23,
@@ -211,6 +249,8 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
     Column {
         oid: 24,
@@ -222,5 +262,7 @@ pub const SYS_COLUMNS_INDEXES_TABLE: &[Column] = &[
         is_unique: false,
         is_primary_key: false,
         default_val: None,
+        xmin: 0,
+        xmax: 0,
     },
 ];

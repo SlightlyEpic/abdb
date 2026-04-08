@@ -1,19 +1,18 @@
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use crate::accessor::AccessorImpl;
 use crate::binder::{Binder, OidAllocator};
 use crate::buffer::r#impl::BufferPool;
-use crate::common::txn::Txn;
 use crate::error::{DbError, Result};
 use crate::executor::{self, ExecutionResult};
 use crate::optimizer::Optimizer;
 use crate::parser::{self, ast::Statement};
 use crate::planner::Planner;
+use crate::storage::DiskManagerImpl;
 use crate::storage::allocator::SimpleAllocator;
 use crate::storage::directory::BTreePageDirectory;
-use crate::storage::DiskManagerImpl;
-use crate::transaction::{IsolationLevel, Transaction, TransactionManager};
+use crate::transaction::{IsolationLevel, TransactionManager, Txn};
 
 type DM = DiskManagerImpl<BTreePageDirectory, SimpleAllocator>;
 type BP = BufferPool<DM>;
@@ -21,7 +20,7 @@ type Acc = AccessorImpl<BP>;
 
 pub struct Session {
     pub session_id: u64,
-    pub current_txn: Option<Transaction>,
+    pub current_txn: Option<Txn>,
     pub session_isolation_level: IsolationLevel,
     pub next_txn_isolation_level: Option<IsolationLevel>,
 
@@ -33,7 +32,11 @@ pub struct Session {
 static SESSION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl Session {
-    pub fn new(accessor: Arc<Acc>, txn_manager: Arc<TransactionManager>, oid_allocator: Arc<dyn OidAllocator>) -> Self {
+    pub fn new(
+        accessor: Arc<Acc>,
+        txn_manager: Arc<TransactionManager>,
+        oid_allocator: Arc<dyn OidAllocator>,
+    ) -> Self {
         let session_id = SESSION_COUNTER.fetch_add(1, Ordering::SeqCst);
         Self {
             session_id,
@@ -66,22 +69,28 @@ impl Session {
                     if self.current_txn.is_some() {
                         Err(DbError::TransactionAlreadyInProgress)
                     } else {
-                        self.current_txn = Some(self.txn_manager.begin(isolation_level.unwrap_or(self.session_isolation_level)));
+                        self.current_txn = Some(
+                            self.txn_manager
+                                .begin(isolation_level.unwrap_or(self.session_isolation_level)),
+                        );
                         Ok("BEGIN".into())
                     }
                 }
                 Statement::Commit => {
-                    let current_txn =
-                        self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
-                    self.txn_manager.commit(current_txn)?;
-                    self.current_txn = None;
-                    Ok("COMMIT".into())
+                    let current_txn = self.current_txn.take().ok_or(DbError::NotInTransaction)?;
+
+                    if self.txn_manager.get_txn_state(current_txn.id)
+                        == crate::transaction::TxnState::Aborted
+                    {
+                        Ok("ROLLBACK".into())
+                    } else {
+                        self.txn_manager.commit(&current_txn)?;
+                        Ok("COMMIT".into())
+                    }
                 }
                 Statement::Rollback => {
-                    let current_txn =
-                        self.current_txn.as_mut().ok_or(DbError::NotInTransaction)?;
-                    self.txn_manager.rollback(current_txn)?;
-                    self.current_txn = None;
+                    let current_txn = self.current_txn.take().ok_or(DbError::NotInTransaction)?;
+                    let _ = self.txn_manager.rollback(&current_txn);
                     Ok("ROLLBACK".into())
                 }
                 other => self.execute_sql_in_txn(other).await,
@@ -94,78 +103,67 @@ impl Session {
         stmt: Statement,
     ) -> impl std::future::Future<Output = Result<String>> + '_ {
         async move {
-            // Get or create transaction
+            let is_auto_commit = self.current_txn.is_none();
             let txn = self.get_or_begin_txn();
 
-            // 1. Bind
-            let binder = Binder::new(
-                Arc::clone(&self.accessor),
-                Arc::clone(&self.oid_allocator),
-                txn,
-            );
-            let bound = binder.bind(stmt)?;
-
-            // 2. Plan
-            let plan = Planner::plan(bound)?;
-
-            // 3. Optimize
-            let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn);
-            let physical = optimizer.optimize(plan)?;
-
-            // 4. Execute
-            let result = executor::execute(physical, self.accessor.as_ref(), txn).await?;
-
-            // 5. Flush on any mutation so state survives a kill before WAL exists.
-            if matches!(
-                result,
-                ExecutionResult::RowsAffected(_) | ExecutionResult::Ok(_)
-            ) {
-                self.accessor
-                    .flush()
-                    .await
-                    .map_err(|e| DbError::Internal(format!("flush failed: {:?}", e)))?;
+            if !is_auto_commit
+                && self.txn_manager.get_txn_state(txn.id) == crate::transaction::TxnState::Aborted
+            {
+                return Err(DbError::InvalidTransactionState(
+                    "current transaction is aborted, commands ignored until end of transaction block".into()
+                ));
             }
 
-            // Format result
-            Ok(format_result(result))
+            let result = async {
+                let binder = Binder::new(
+                    Arc::clone(&self.accessor),
+                    Arc::clone(&self.oid_allocator),
+                    txn.clone(),
+                );
+                let bound = binder.bind(stmt)?;
+                let plan = Planner::plan(bound)?;
+                let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn.clone());
+                let physical = optimizer.optimize(plan)?;
+
+                executor::execute(physical, self.accessor.as_ref(), txn.clone()).await
+            }
+            .await;
+
+            match result {
+                Ok(exec_result) => {
+                    if is_auto_commit {
+                        self.txn_manager.commit(&txn)?;
+                    }
+                    if matches!(
+                        exec_result,
+                        ExecutionResult::RowsAffected(_) | ExecutionResult::Ok(_)
+                    ) {
+                        self.accessor
+                            .flush()
+                            .await
+                            .map_err(|e| DbError::Internal(format!("flush failed: {:?}", e)))?;
+                    }
+                    Ok(format_result(exec_result))
+                }
+                Err(e) => {
+                    let _ = self.txn_manager.rollback(&txn);
+                    Err(e)
+                }
+            }
         }
     }
 
-    /// Get the current transaction's Txn struct, or begin an auto-commit transaction.
     fn get_or_begin_txn(&mut self) -> Txn {
         match &self.current_txn {
-            Some(t) => Txn {
-                id: t.txn_id,
-                isolation: convert_isolation(t.isolation_level),
-            },
+            Some(t) => t.clone(),
             None => {
-                // Auto-commit mode: begin implicit transaction
                 let isolation = self.session_isolation_level;
-                let t = self.txn_manager.begin(isolation);
-                let txn = Txn {
-                    id: t.txn_id,
-                    isolation: convert_isolation(t.isolation_level),
-                };
-                // For auto-commit, we start the transaction but don't store it
-                // (it will auto-commit after the statement)
-                txn
+                self.txn_manager.begin(isolation)
             }
         }
     }
 }
 
-/// Convert transaction isolation level to common Txn isolation level.
-fn convert_isolation(level: IsolationLevel) -> crate::common::txn::IsolationLevel {
-    match level {
-        IsolationLevel::ReadUncommitted => crate::common::txn::IsolationLevel::ReadUncommitted,
-        IsolationLevel::ReadCommitted => crate::common::txn::IsolationLevel::ReadCommitted,
-        IsolationLevel::RepeatableRead => crate::common::txn::IsolationLevel::Snapshot,
-        IsolationLevel::Snapshot => crate::common::txn::IsolationLevel::Snapshot,
-        IsolationLevel::Serializable => crate::common::txn::IsolationLevel::Snapshot,
-    }
-}
-
-/// Format execution result as a string.
 fn format_result(result: ExecutionResult) -> String {
     match result {
         ExecutionResult::Ok(msg) => msg,
@@ -175,10 +173,8 @@ fn format_result(result: ExecutionResult) -> String {
                 return format!("({} row(s))", rows.len());
             }
 
-            // 1. Initialize column widths with the length of the column headers
             let mut col_widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
-            
-            // 2. Stringify row values and update maximum column widths
+
             let mut stringified_rows = Vec::with_capacity(rows.len());
             for row in &rows {
                 let str_row: Vec<String> = row.values.iter().map(|v| v.to_string()).collect();
@@ -192,7 +188,6 @@ fn format_result(result: ExecutionResult) -> String {
 
             let mut output = String::new();
 
-            // 3. Format Header
             let header_cells: Vec<String> = columns
                 .iter()
                 .enumerate()
@@ -201,21 +196,15 @@ fn format_result(result: ExecutionResult) -> String {
             output.push_str(&header_cells.join(" | "));
             output.push('\n');
 
-            // 4. Format Separator
-            let sep_cells: Vec<String> = col_widths
-                .iter()
-                .map(|&w| "-".repeat(w))
-                .collect();
+            let sep_cells: Vec<String> = col_widths.iter().map(|&w| "-".repeat(w)).collect();
             output.push_str(&sep_cells.join("-+-"));
             output.push('\n');
 
-            // 5. Format Rows
             for str_row in stringified_rows {
                 let row_cells: Vec<String> = str_row
                     .into_iter()
                     .enumerate()
                     .map(|(i, val)| {
-                        // Safely fallback to 0 width if row length exceeds header length
                         let width = col_widths.get(i).copied().unwrap_or(0);
                         format!("{:<width$}", val, width = width)
                     })
@@ -224,7 +213,6 @@ fn format_result(result: ExecutionResult) -> String {
                 output.push('\n');
             }
 
-            // 6. Footer
             output.push_str(&format!("({} row(s))", rows.len()));
             output
         }

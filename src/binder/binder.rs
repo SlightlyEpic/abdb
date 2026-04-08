@@ -54,9 +54,9 @@ impl<A: Accessor> Binder<A> {
 
             // Misc
             Statement::DescribeTable(name) => {
-                let table = self.accessor.catalog_get_table_by_name(self.txn, &name)
+                let table = self.accessor.catalog_get_table_by_name(self.txn.clone(), &name)
                     .map_err(|_| BindError::UnknownTable(name.clone()))?;
-                let mut columns = self.accessor.catalog_get_table_columns(self.txn, table.oid)
+                let mut columns = self.accessor.catalog_get_table_columns(self.txn.clone(), table.oid)
                     .map_err(|e| BindError::CatalogError(format!("{:?}", e)))?;
                 columns.sort_by_key(|c| c.position);
                 Ok(BoundStatement::DescribeTable(table, columns))
@@ -75,7 +75,7 @@ impl<A: Accessor> Binder<A> {
     fn bind_create_table(&self, stmt: CreateTableStmt) -> BindResult<BoundStatement> {
         let exists = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.name)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.name)
             .is_ok();
 
         if exists {
@@ -139,7 +139,7 @@ impl<A: Accessor> Binder<A> {
     fn bind_drop_table(&self, stmt: DropTableStmt) -> BindResult<BoundStatement> {
         match self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.name)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.name)
         {
             Ok(table) => Ok(BoundStatement::DropTable(BoundDropTable {
                 table_oid: table.oid,
@@ -160,12 +160,12 @@ impl<A: Accessor> Binder<A> {
     fn bind_alter_table(&self, stmt: AlterTableStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.name)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.name)
             .map_err(|_| BindError::UnknownTable(stmt.name.clone()))?;
 
         let columns = self
             .accessor
-            .catalog_get_table_columns(self.txn, table.oid)
+            .catalog_get_table_columns(self.txn.clone(), table.oid)
             .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
 
         let action = match stmt.action {
@@ -271,7 +271,7 @@ impl<A: Accessor> Binder<A> {
 
         let exists = self
             .accessor
-            .catalog_get_index_by_name(self.txn, &stmt.name)
+            .catalog_get_index_by_name(self.txn.clone(), &stmt.name)
             .is_ok();
 
         if exists {
@@ -283,12 +283,12 @@ impl<A: Accessor> Binder<A> {
 
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.table)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let columns = self
             .accessor
-            .catalog_get_table_columns(self.txn, table.oid)
+            .catalog_get_table_columns(self.txn.clone(), table.oid)
             .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
 
         let col_name = &stmt.columns[0];
@@ -311,7 +311,7 @@ impl<A: Accessor> Binder<A> {
     fn bind_drop_index(&self, stmt: DropIndexStmt) -> BindResult<BoundStatement> {
         match self
             .accessor
-            .catalog_get_index_by_name(self.txn, &stmt.name)
+            .catalog_get_index_by_name(self.txn.clone(), &stmt.name)
         {
             Ok(index) => Ok(BoundStatement::DropIndex(BoundDropIndex {
                 index_oid: index.oid,
@@ -332,12 +332,12 @@ impl<A: Accessor> Binder<A> {
     fn bind_insert(&self, stmt: InsertStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.table)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
             .accessor
-            .catalog_get_table_columns(self.txn, table.oid)
+            .catalog_get_table_columns(self.txn.clone(), table.oid)
             .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
 
         table_columns.sort_by_key(|c| c.position);
@@ -407,12 +407,12 @@ impl<A: Accessor> Binder<A> {
     fn bind_update(&self, stmt: UpdateStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.table)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
             .accessor
-            .catalog_get_table_columns(self.txn, table.oid)
+            .catalog_get_table_columns(self.txn.clone(), table.oid)
             .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
         table_columns.sort_by_key(|c| c.position);
 
@@ -453,12 +453,12 @@ impl<A: Accessor> Binder<A> {
     fn bind_delete(&self, stmt: DeleteStmt) -> BindResult<BoundStatement> {
         let table = self
             .accessor
-            .catalog_get_table_by_name(self.txn, &stmt.table)
+            .catalog_get_table_by_name(self.txn.clone(), &stmt.table)
             .map_err(|_| BindError::UnknownTable(stmt.table.clone()))?;
 
         let mut table_columns = self
             .accessor
-            .catalog_get_table_columns(self.txn, table.oid)
+            .catalog_get_table_columns(self.txn.clone(), table.oid)
             .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
         table_columns.sort_by_key(|c| c.position);
 
@@ -505,9 +505,7 @@ impl<A: Accessor> Binder<A> {
                 is_left_or_full || is_right_or_full,
             );
 
-            let join_kind = join.kind.clone();
-            let condition =
-                self.bind_join_condition(join.condition, join.kind, &scope, &bound_ref)?;
+            let condition = self.bind_join_condition(join.condition, join.kind, &scope, &bound_ref)?;
 
             bound_joins.push(BoundJoin {
                 kind: translate_join_kind(join.kind),
@@ -637,11 +635,11 @@ impl<A: Accessor> Binder<A> {
             TableRef::Named { name, alias } => {
                 let table = self
                     .accessor
-                    .catalog_get_table_by_name(self.txn, &name)
+                    .catalog_get_table_by_name(self.txn.clone(), &name)
                     .map_err(|_| BindError::UnknownTable(name))?;
                 let mut columns = self
                     .accessor
-                    .catalog_get_table_columns(self.txn, table.oid)
+                    .catalog_get_table_columns(self.txn.clone(), table.oid)
                     .map_err(|e| BindError::CatalogError(format!("{e:?}")))?;
                 columns.sort_by_key(|c| c.position);
                 Ok(BoundTableRef::BaseTable {

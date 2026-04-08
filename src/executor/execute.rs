@@ -74,6 +74,9 @@ pub fn execute<'a, A: Accessor + 'a>(
                             is_unique: c.unique,
                             is_primary_key: c.primary_key,
                             default_val,
+                            xmin: txn.id,
+                            xmax: 0,
+
                         }
                     })
                     .collect();
@@ -82,10 +85,12 @@ pub fn execute<'a, A: Accessor + 'a>(
                     oid: ct.table_oid,
                     name: std::borrow::Cow::Owned(ct.name.clone()),
                     file_id: ct.file_id,
+                    xmin: txn.id,
+                    xmax: 0,
                 };
 
                 accessor
-                    .create_table(txn, table, columns)
+                    .create_table(txn.clone(), table, columns)
                     .await
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -96,7 +101,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                 // Table OID 0 means the table wasn't found but IF EXISTS was used, so we skip deleting
                 if dt.table_oid != 0 {
                     accessor
-                        .drop_table(txn, dt.table_oid, dt.name.clone())
+                        .drop_table(txn.clone(), dt.table_oid, dt.name.clone())
                         .await
                         .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                 }
@@ -117,11 +122,11 @@ pub fn execute<'a, A: Accessor + 'a>(
                         }
 
                         let old_columns = accessor
-                            .catalog_get_table_columns(txn, at.table_oid)
+                            .catalog_get_table_columns(txn.clone(), at.table_oid)
                             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                         
                         let stream = accessor
-                            .table_scan(txn, at.table_oid)
+                            .table_scan(txn.clone(), at.table_oid)
                             .await
                             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                             
@@ -161,6 +166,8 @@ pub fn execute<'a, A: Accessor + 'a>(
                                 is_unique: c.unique,
                                 is_primary_key: c.primary_key,
                                 default_val: default_val_opt.clone(),
+                                xmin: txn.id,
+                                xmax: 0,
                             };
                             new_columns.push(new_col);
                             let new_layout = TupleLayout::from(new_columns.clone());
@@ -173,7 +180,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                             let new_col_names: Vec<&str> = sorted_new_cols.iter().map(|col| col.name.as_ref()).collect();
 
                             for (tuple_bytes, rid) in rows_to_update {
-                                accessor.table_delete(txn, at.table_oid, rid).await
+                                accessor.table_delete(txn.clone(), at.table_oid, rid).await
                                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                                 
                                 let mut new_values = vec![Value::Null; sorted_new_cols.len()];
@@ -184,7 +191,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                                new_values[c.position as usize] = default_val_opt.clone().unwrap_or(Value::Null);
                                 
                                 let new_tuple_bytes = new_layout.encode_tuple(&new_col_names, &new_values);
-                                accessor.table_insert(txn, at.table_oid, new_tuple_bytes).await
+                                accessor.table_insert(txn.clone(), at.table_oid, new_tuple_bytes).await
                                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                             }
                         }
@@ -199,10 +206,12 @@ pub fn execute<'a, A: Accessor + 'a>(
                             is_unique: c.unique,
                             is_primary_key: c.primary_key,
                             default_val: default_val_opt,
+                            xmin: txn.id,
+                            xmax: 0,
                         };
                         
                         accessor
-                            .add_column(txn, at.table_oid, col)
+                            .add_column(txn.clone(), at.table_oid, col)
                             .await
                             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                             
@@ -211,14 +220,14 @@ pub fn execute<'a, A: Accessor + 'a>(
                     BoundAlterAction::DropColumn { column_oid, .. } => {
                         let dropped_name = format!("__abdb_dropped_{}", column_oid);
                         accessor
-                            .rename_column(txn, at.table_oid, column_oid, dropped_name)
+                            .rename_column(txn.clone(), at.table_oid, column_oid, dropped_name)
                             .await
                             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                         Ok(ExecutionResult::Ok(format!("ALTER TABLE {} DROP COLUMN", at.name)))
                     }
                     BoundAlterAction::RenameColumn { column_oid, new_name, .. } => {
                         accessor
-                            .rename_column(txn, at.table_oid, column_oid, new_name.clone())
+                            .rename_column(txn.clone(), at.table_oid, column_oid, new_name.clone())
                             .await
                             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                         Ok(ExecutionResult::Ok(format!("ALTER TABLE {} RENAME COLUMN TO {}", at.name, new_name)))
@@ -234,16 +243,18 @@ pub fn execute<'a, A: Accessor + 'a>(
                     table_oid: ci.table_oid,
                     file_id: ci.file_id,
                     column_oid: ci.column_oid,
+                    xmin: txn.id,
+                    xmax: 0,
                 };
 
                 accessor
-                    .create_index(txn, index.clone())
+                    .create_index(txn.clone(), index.clone())
                     .await
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
-                let table = accessor.catalog_get_table_by_oid(txn, ci.table_oid)
+                let table = accessor.catalog_get_table_by_oid(txn.clone(), ci.table_oid)
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
-                let columns = accessor.catalog_get_table_columns(txn, ci.table_oid)
+                let columns = accessor.catalog_get_table_columns(txn.clone(), ci.table_oid)
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                 
                 let target_col_idx = columns.iter().position(|c| c.oid == ci.column_oid)
@@ -257,13 +268,13 @@ pub fn execute<'a, A: Accessor + 'a>(
                     schema: Schema::empty(),
                 };
 
-                let rows = execute_seq_scan(&scan, accessor, txn).await?;
+                let rows = execute_seq_scan(&scan, accessor, txn.clone()).await?;
                 for row in rows {
                     if let Some(val) = row.get(target_col_idx) {
                         if !val.is_null() {
                             let rid = row.rid.unwrap();
                             let key_bytes = val.to_bytes();
-                            accessor.index_insert(txn, ci.index_oid, key_bytes, rid)
+                            accessor.index_insert(txn.clone(), ci.index_oid, key_bytes, rid)
                                 .await
                                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                         }
@@ -276,7 +287,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::DropIndex(di) => {
                 if di.index_oid != 0 {
                     accessor
-                        .drop_index(txn, di.index_oid, di.name.clone())
+                        .drop_index(txn.clone(), di.index_oid, di.name.clone())
                         .await
                         .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                 }
@@ -308,7 +319,7 @@ pub fn execute<'a, A: Accessor + 'a>(
 
             PhysicalPlan::ShowTables => {
                 let tables = accessor
-                    .catalog_get_all_tables(txn)
+                    .catalog_get_all_tables(txn.clone())
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
                 let out_cols = vec!["table_name".to_string(), "oid".to_string()];
@@ -354,12 +365,12 @@ pub fn execute<'a, A: Accessor + 'a>(
                     .iter()
                     .map(|c| c.name.clone())
                     .collect();
-                let rows = execute_seq_scan(&scan, accessor, txn).await?;
+                let rows = execute_seq_scan(&scan, accessor, txn.clone()).await?;
                 Ok(ExecutionResult::Rows { columns, rows })
             }
 
             PhysicalPlan::Filter(filter) => {
-                let inner = execute(*filter.input, accessor, txn).await?;
+                let inner = execute(*filter.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, rows } => {
                         let filtered = execute_filter(&filter.predicate, rows)?;
@@ -373,7 +384,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Projection(proj) => {
-                let inner = execute(*proj.input, accessor, txn).await?;
+                let inner = execute(*proj.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { rows, .. } => {
                         let projected = execute_projection(&proj.exprs, rows)?;
@@ -388,7 +399,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Sort(sort) => {
-                let inner = execute(*sort.input, accessor, txn).await?;
+                let inner = execute(*sort.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, mut rows } => {
                         execute_sort(&mut rows, &sort.order_by)?;
@@ -399,7 +410,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Limit(limit) => {
-                let inner = execute(*limit.input, accessor, txn).await?;
+                let inner = execute(*limit.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, rows } => {
                         let limited = execute_limit(rows, &limit.limit, &limit.offset)?;
@@ -413,7 +424,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::TopN(topn) => {
-                let inner = execute(*topn.input, accessor, txn).await?;
+                let inner = execute(*topn.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, mut rows } => {
                         execute_sort(&mut rows, &topn.order_by)?;
@@ -428,7 +439,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::Distinct(distinct) => {
-                let inner = execute(*distinct.input, accessor, txn).await?;
+                let inner = execute(*distinct.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, rows } => {
                         let distinct_rows = execute_distinct(rows);
@@ -442,7 +453,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::HashDistinct(hash_distinct) => {
-                let inner = execute(*hash_distinct.input, accessor, txn).await?;
+                let inner = execute(*hash_distinct.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { columns, rows } => {
                         let distinct_rows = execute_distinct(rows);
@@ -458,8 +469,8 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::NestedLoopJoin(join) => {
                 let left_width = join.left.schema().len();
                 let right_width = join.right.schema().len();
-                let left_result = execute(*join.left, accessor, txn).await?;
-                let right_result = execute(*join.right, accessor, txn).await?;
+                let left_result = execute(*join.left, accessor, txn.clone()).await?;
+                let right_result = execute(*join.right, accessor, txn.clone()).await?;
 
                 match (left_result, right_result) {
                     (
@@ -491,8 +502,8 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::HashJoin(join) => {
                 let left_width = join.left.schema().len();
                 let right_width = join.right.schema().len();
-                let left_result = execute(*join.left, accessor, txn).await?;
-                let right_result = execute(*join.right, accessor, txn).await?;
+                let left_result = execute(*join.left, accessor, txn.clone()).await?;
+                let right_result = execute(*join.right, accessor, txn.clone()).await?;
 
                 match (left_result, right_result) {
                     (
@@ -524,7 +535,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::HashAggregate(agg) => {
-                let inner = execute(*agg.input, accessor, txn).await?;
+                let inner = execute(*agg.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { rows, .. } => {
                         let (columns, agg_rows) = execute_hash_aggregate(
@@ -543,7 +554,7 @@ pub fn execute<'a, A: Accessor + 'a>(
             }
 
             PhysicalPlan::StreamAggregate(agg) => {
-                let inner = execute(*agg.input, accessor, txn).await?;
+                let inner = execute(*agg.input, accessor, txn.clone()).await?;
                 match inner {
                     ExecutionResult::Rows { rows, .. } => {
                         let (columns, agg_rows) = execute_hash_aggregate(
@@ -565,7 +576,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                 let table = insert.table.clone();
                 let table_columns = insert.table_columns.clone();
                 let target_columns = insert.target_columns.clone();
-                let source_result = execute(*insert.source, accessor, txn).await?;
+                let source_result = execute(*insert.source, accessor, txn.clone()).await?;
                 match source_result {
                     ExecutionResult::Rows { rows, .. } => {
                         let count = execute_insert(
@@ -574,7 +585,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                             &table_columns,
                             &target_columns,
                             accessor,
-                            txn,
+                            txn.clone(),
                         )
                         .await?;
                         Ok(ExecutionResult::RowsAffected(count))
@@ -589,11 +600,11 @@ pub fn execute<'a, A: Accessor + 'a>(
                 let table = update.table.clone();
                 let table_columns = update.table_columns.clone();
                 let assignments = update.assignments.clone();
-                let source_result = execute(*update.input, accessor, txn).await?;
+                let source_result = execute(*update.input, accessor, txn.clone()).await?;
                 match source_result {
                     ExecutionResult::Rows { rows, .. } => {
                         let count =
-                            execute_update(rows, &table, &table_columns, &assignments, accessor, txn)
+                            execute_update(rows, &table, &table_columns, &assignments, accessor, txn.clone())
                                 .await?;
                         Ok(ExecutionResult::RowsAffected(count))
                     }
@@ -605,10 +616,10 @@ pub fn execute<'a, A: Accessor + 'a>(
 
             PhysicalPlan::Delete(delete) => {
                 let table = delete.table.clone();
-                let source_result = execute(*delete.input, accessor, txn).await?;
+                let source_result = execute(*delete.input, accessor, txn.clone()).await?;
                 match source_result {
                     ExecutionResult::Rows { rows, .. } => {
-                        let count = execute_delete(rows, &table, accessor, txn).await?;
+                        let count = execute_delete(rows, &table, accessor, txn.clone()).await?;
                         Ok(ExecutionResult::RowsAffected(count))
                     }
                     _ => Err(DbError::Internal(
@@ -624,7 +635,7 @@ pub fn execute<'a, A: Accessor + 'a>(
                     .iter()
                     .map(|c| c.name.clone())
                     .collect();
-                let rows = execute_index_scan(&scan, accessor, txn).await?;
+                let rows = execute_index_scan(&scan, accessor, txn.clone()).await?;
                 Ok(ExecutionResult::Rows { columns, rows })
             }
         }
@@ -655,7 +666,7 @@ fn execute_seq_scan<'a, A: Accessor>(
     async move {
         let layout = TupleLayout::from(scan.columns.clone());
         let stream = accessor
-            .table_scan(txn, scan.table.oid)
+            .table_scan(txn.clone(), scan.table.oid)
             .await
             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -722,7 +733,7 @@ fn execute_index_scan<'a, A: Accessor>(
 
         // Scan the index
         let stream = accessor
-            .index_scan(txn, scan.index.oid, start_key, end_key)
+            .index_scan(txn.clone(), scan.index.oid, start_key, end_key)
             .await
             .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -735,7 +746,7 @@ fn execute_index_scan<'a, A: Accessor>(
 
             // Fetch the tuple from the table using the RID
             let tuple_bytes = accessor
-                .table_get(txn, scan.table.oid, rid)
+                .table_get(txn.clone(), scan.table.oid, rid)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -1304,7 +1315,7 @@ fn execute_insert<'a, A: Accessor>(
 
                 if (col.is_unique || col.is_primary_key) && !val.is_null() {
                     let stream = accessor
-                        .table_scan(txn, table.oid)
+                        .table_scan(txn.clone(), table.oid)
                         .await
                         .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                     let mut stream = std::pin::pin!(stream);
@@ -1327,7 +1338,7 @@ fn execute_insert<'a, A: Accessor>(
             let tuple_bytes = layout.encode_tuple(&col_names, &full_values);
 
             accessor
-                .table_insert(txn, table.oid, tuple_bytes)
+                .table_insert(txn.clone(), table.oid, tuple_bytes)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -1353,7 +1364,7 @@ fn execute_delete<'a, A: Accessor>(
             })?;
 
             accessor
-                .table_delete(txn, table.oid, rid)
+                .table_delete(txn.clone(), table.oid, rid)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -1389,7 +1400,7 @@ fn execute_update<'a, A: Accessor>(
 
             // MVCC update: delete old tuple
             accessor
-                .table_delete(txn, table.oid, rid)
+                .table_delete(txn.clone(), table.oid, rid)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 
@@ -1419,7 +1430,7 @@ fn execute_update<'a, A: Accessor>(
                 }
 
                 if (col.is_unique || col.is_primary_key) && !new_value.is_null() && new_value != new_values[col_pos] {
-                    let stream = accessor.table_scan(txn, table.oid).await.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                    let stream = accessor.table_scan(txn.clone(), table.oid).await.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                     let mut stream = std::pin::pin!(stream);
                     while let Some(result) = stream.next().await {
                         let (tuple_bytes, _) = result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
@@ -1442,7 +1453,7 @@ fn execute_update<'a, A: Accessor>(
             let tuple_bytes = layout.encode_tuple(&col_names, &new_values);
 
             accessor
-                .table_insert(txn, table.oid, tuple_bytes)
+                .table_insert(txn.clone(), table.oid, tuple_bytes)
                 .await
                 .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
 

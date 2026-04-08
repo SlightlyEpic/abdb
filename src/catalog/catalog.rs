@@ -14,6 +14,8 @@ pub struct Table {
     pub oid: aliases::OId,
     pub name: Cow<'static, str>,
     pub file_id: aliases::FileId,
+    pub xmin: aliases::TxnId,
+    pub xmax: aliases::TxnId,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +29,8 @@ pub struct Column {
     pub is_unique: bool,
     pub is_primary_key: bool,
     pub default_val: Option<databox::Value>,
+    pub xmin: aliases::TxnId,
+    pub xmax: aliases::TxnId,
 }
 
 #[derive(Clone, Debug)]
@@ -35,7 +39,7 @@ pub struct Index {
     pub name: Cow<'static, str>,
     pub table_oid: aliases::OId,
     pub file_id: aliases::FileId,
-    // TODO: Support multi-column indexes later
-    // Should be simple, just needs another index columns table with dynamic layout calculation
     pub column_oid: aliases::OId,
+    pub xmin: aliases::TxnId,
+    pub xmax: aliases::TxnId,
 }

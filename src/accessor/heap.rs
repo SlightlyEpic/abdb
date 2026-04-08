@@ -23,7 +23,7 @@ use super::{
 /// Traverses the heap as a linked list of pages.
 struct HeapScanState<'a, B: BufferPool> {
     bp: &'a B,
-    /// Current page in the linked list (0 = end of list)
+
     current_page: LPageId,
     buffered: Vec<(Vec<u8>, RecordId)>,
     buf_idx: usize,
@@ -42,7 +42,6 @@ pub async fn scan<'a, B: BufferPool>(
     file_id: FileId,
     txn: Txn,
 ) -> Result<impl Stream<Item = Result<(Vec<u8>, RecordId)>> + Send> {
-    // Read file header to get first page
     let header_loc = PPageId {
         file: file_id,
         offset: 0,
@@ -68,14 +67,12 @@ pub async fn scan<'a, B: BufferPool>(
 
     Ok(futures::stream::unfold(state, |mut state| async move {
         loop {
-            // Yield from buffer first
             if state.buf_idx < state.buffered.len() {
                 let item = state.buffered[state.buf_idx].clone();
                 state.buf_idx += 1;
                 return Some((Ok(item), state));
             }
 
-            // Check if we've reached the end of the list
             if state.current_page == 0 {
                 return None;
             }
@@ -83,7 +80,6 @@ pub async fn scan<'a, B: BufferPool>(
             let bp = state.bp;
             let current_lpage_id = state.current_page;
 
-            // Fetch the current page by LPageId
             let guard = match bp.fetch_page_read(current_lpage_id).await {
                 Ok(g) => g,
                 Err(e) => return Some((Err(Error::BufferError(e)), state)),
@@ -115,14 +111,11 @@ pub async fn scan<'a, B: BufferPool>(
                     Err(_) => continue,
                 };
 
-                // Skip tombstoned slots (length == 0)
                 if data.is_empty() {
                     continue;
                 }
 
-                // Check MVCC visibility
                 if visibility::is_visible(data, &state.txn) {
-                    // Strip the XMIN/XMAX header, return user data only
                     let user_data = data[visibility::TUPLE_HEADER_SIZE..].to_vec();
                     let rid = RecordId {
                         page_id: current_lpage_id,
@@ -132,9 +125,7 @@ pub async fn scan<'a, B: BufferPool>(
                 }
             }
 
-            // Advance to next page in the list
             state.current_page = next_page;
-            // Loop back to yield from buffer
         }
     }))
 }
@@ -145,7 +136,10 @@ pub async fn max_xmin<B: BufferPool>(
     bp: &B,
     file_id: FileId,
 ) -> Result<crate::common::aliases::TxnId> {
-    let header_loc = PPageId { file: file_id, offset: 0 };
+    let header_loc = PPageId {
+        file: file_id,
+        offset: 0,
+    };
     let guard = bp
         .fetch_page_at_loc_read(header_loc)
         .await
@@ -240,7 +234,7 @@ pub async fn insert<'a, B: BufferPool>(
         match page.insert(&full_tuple) {
             Ok(slot_id) => {
                 guard.mark_dirty().map_err(Error::BufferError)?;
-                // TODO: guard.commit_wal(lsn) once WAL is implemented
+
                 return Ok(RecordId {
                     page_id: current_page,
                     slot_id,
@@ -334,62 +328,69 @@ pub async fn get<'a, B: BufferPool>(
 
     Ok(data[visibility::TUPLE_HEADER_SIZE..].to_vec())
 }
-
 // ============================================================================
 // TABLE DELETE
 // ============================================================================
 
-/// Soft-delete a tuple by setting its XMAX to the current transaction ID.
-///
-/// The tuple remains physically on the page but becomes invisible to
-/// transactions with id >= txn.id.
-///
-/// Checks visibility before deleting — a transaction cannot delete a tuple
-/// it cannot see, and cannot double-delete a tuple already marked deleted.
-///
-/// The RecordId.page_id is a global LPageId, so we fetch directly by that ID.
 pub async fn delete<'a, B: BufferPool>(
     bp: &'a B,
     _file_id: FileId,
     txn: &Txn,
     rid: aliases::RecordId,
 ) -> Result<()> {
-    // RecordId.page_id is a global LPageId - fetch directly
-    let mut guard = bp
-        .fetch_page_write(rid.page_id)
-        .await
-        .map_err(Error::BufferError)?;
-    let mut page = HeapPage::new(&mut *guard);
+    loop {
+        let mut guard = bp
+            .fetch_page_write(rid.page_id)
+            .await
+            .map_err(Error::BufferError)?;
+        let mut page = HeapPage::new(&mut *guard);
 
-    let data = page
-        .get_data_mut(rid.slot_id as usize)
-        .map_err(|_| Error::TupleNonExistent)?;
+        let data = page
+            .get_data_mut(rid.slot_id as usize)
+            .map_err(|_| Error::TupleNonExistent)?;
 
-    if data.is_empty() || data.len() < visibility::TUPLE_HEADER_SIZE {
-        return Err(Error::TupleNonExistent);
+        if data.is_empty() || data.len() < visibility::TUPLE_HEADER_SIZE {
+            return Err(Error::TupleNonExistent);
+        }
+
+        if !visibility::is_visible(data, txn) {
+            let xmin = visibility::read_xmin(data);
+            let xmax = visibility::read_xmax(data);
+            return Err(Error::TupleNotVisible(txn.id, xmin, xmax));
+        }
+
+        let existing_xmax = visibility::read_xmax(data);
+        if existing_xmax != 0 && existing_xmax != txn.id {
+            match txn.tm.get_txn_state(existing_xmax) {
+                crate::transaction::TxnState::Active => {
+                    drop(page);
+                    drop(guard);
+
+                    txn.tm.wait_for_txn(existing_xmax).await;
+
+                    continue;
+                }
+                crate::transaction::TxnState::Committed(_) => {
+                    use crate::transaction::IsolationLevel;
+                    match txn.isolation {
+                        IsolationLevel::RepeatableRead
+                        | IsolationLevel::Snapshot
+                        | IsolationLevel::Serializable => {
+                            return Err(Error::AlreadyDeleted(existing_xmax));
+                        }
+                        IsolationLevel::ReadCommitted | IsolationLevel::ReadUncommitted => {
+                            return Err(Error::AlreadyDeleted(existing_xmax));
+                        }
+                    }
+                }
+                crate::transaction::TxnState::Aborted => {}
+            }
+        }
+
+        visibility::write_xmax(data, txn.id);
+
+        guard.mark_dirty().map_err(Error::BufferError)?;
+
+        return Ok(());
     }
-
-    // Check that the tuple is visible to this transaction before deleting.
-    // This prevents:
-    // - Double-deleting a tuple already deleted by another transaction
-    // - Deleting a tuple created by a future (uncommitted) transaction
-    if !visibility::is_visible(data, txn) {
-        let xmin = visibility::read_xmin(data);
-        let xmax = visibility::read_xmax(data);
-        return Err(Error::TupleNotVisible(txn.id, xmin, xmax));
-    }
-
-    // Check if already deleted by another concurrent transaction
-    let existing_xmax = visibility::read_xmax(data);
-    if existing_xmax != 0 {
-        return Err(Error::AlreadyDeleted(existing_xmax));
-    }
-
-    // Set XMAX to mark as deleted for this transaction
-    visibility::write_xmax(data, txn.id);
-
-    guard.mark_dirty().map_err(Error::BufferError)?;
-    // TODO: guard.commit_wal(lsn)
-
-    Ok(())
 }
