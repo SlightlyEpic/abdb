@@ -181,10 +181,21 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
                 })
             }
             AlterTableAction::DropColumn(col_name) => {
+                let visible_columns: Vec<_> = columns.iter()
+                    .filter(|c| !c.name.starts_with("__abdb_dropped_"))
+                    .collect();
+
+                if visible_columns.len() == 1 && visible_columns[0].name.eq_ignore_ascii_case(&col_name) {
+                    return Err(BindError::Unsupported(
+                        "cannot drop column: table must have at least one column".to_string()
+                    ));
+                }
+
                 let col = columns
                     .iter()
-                    .find(|c| c.name.eq_ignore_ascii_case(&col_name))
+                    .find(|c| c.name.eq_ignore_ascii_case(&col_name) && !c.name.starts_with("__abdb_dropped_"))
                     .ok_or_else(|| BindError::UnknownColumn(col_name))?;
+
                 BoundAlterAction::DropColumn {
                     column_oid: col.oid,
                     position: col.position,
