@@ -132,14 +132,11 @@ impl Session {
             let bound = binder.bind(stmt)?;
 
             // 2. Plan
-            let plan =
-                Planner::plan(bound).map_err(|e| DbError::PlanError(format!("{:?}", e)))?;
+            let plan = Planner::plan(bound)?;
 
             // 3. Optimize
             let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn);
-            let physical = optimizer
-                .optimize(plan)
-                .map_err(|e| DbError::OptimizerError(format!("{:?}", e)))?;
+            let physical = optimizer.optimize(plan)?;
 
             // 4. Execute
             let result = executor::execute(physical, self.accessor.as_ref(), txn).await?;
@@ -169,10 +166,7 @@ impl Session {
             },
             None => {
                 // Auto-commit mode: begin implicit transaction
-                let isolation = self
-                    .next_txn_isolation_level
-                    .take()
-                    .unwrap_or(self.session_isolation_level);
+                let isolation = self.session_isolation_level;
                 let t = self.txn_manager.begin(isolation);
                 let txn = Txn {
                     id: t.txn_id,
