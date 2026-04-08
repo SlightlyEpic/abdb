@@ -97,19 +97,87 @@ pub fn execute<'a, A: Accessor + 'a>(
             PhysicalPlan::AlterTable(at) => {
                 match at.action {
                     BoundAlterAction::AddColumn(c) => {
-                        if !c.nullable && c.default.is_none() {
-                            let stream = accessor
-                                .table_scan(txn, at.table_oid)
-                                .await
-                                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
-                                
-                            let mut stream = std::pin::pin!(stream);
+                        let mut default_val = Value::Null;
+                        if let Some(def_expr) = &c.default {
+                            let val = evaluate_expr(def_expr, &Tuple::empty())?;
                             
-                            if stream.next().await.is_some() {
+                            default_val = val.cast(c.data_type).ok_or_else(|| {
+                                DbError::CastError(format!(
+                                    "cannot cast default value to {:?}",
+                                    c.data_type
+                                ))
+                            })?;
+                        }
+
+                        let old_columns = accessor
+                            .catalog_get_table_columns(txn, at.table_oid)
+                            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        
+                        let stream = accessor
+                            .table_scan(txn, at.table_oid)
+                            .await
+                            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                            
+                        let mut stream = std::pin::pin!(stream);
+                        let mut rows_to_update = Vec::new();
+                        
+                        while let Some(result) = stream.next().await {
+                            let (tuple_bytes, rid) = result.map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                            rows_to_update.push((tuple_bytes, rid));
+                        }
+
+                        if !rows_to_update.is_empty() {
+                            if !c.nullable && default_val.is_null() {
                                 return Err(DbError::Internal(format!(
                                     "cannot add NOT NULL column \"{}\" without a DEFAULT value to a populated table",
                                     c.name
                                 )));
+                            }
+
+                            if (c.unique || c.primary_key) && rows_to_update.len() > 1 {
+                                return Err(DbError::Internal(format!(
+                                    "cannot add UNIQUE/PRIMARY KEY column \"{}\" with a constant default to a table with multiple rows",
+                                    c.name
+                                )));
+                            }
+
+                            let old_layout = TupleLayout::from(old_columns.clone());
+                            
+                            let mut new_columns = old_columns.clone();
+                            let new_col = catalog::Column {
+                                oid: c.oid,
+                                table_oid: at.table_oid,
+                                name: std::borrow::Cow::Owned(c.name.clone()),
+                                type_id: c.data_type,
+                                position: c.position,
+                                nullable: c.nullable,
+                                is_unique: c.unique,
+                                is_primary_key: c.primary_key,
+                            };
+                            new_columns.push(new_col);
+                            let new_layout = TupleLayout::from(new_columns.clone());
+
+                            let mut sorted_old_cols = old_columns;
+                            sorted_old_cols.sort_by_key(|col| col.position);
+                            
+                            let mut sorted_new_cols = new_columns;
+                            sorted_new_cols.sort_by_key(|col| col.position);
+                            let new_col_names: Vec<&str> = sorted_new_cols.iter().map(|col| col.name.as_ref()).collect();
+
+                            for (tuple_bytes, rid) in rows_to_update {
+                                accessor.table_delete(txn, at.table_oid, rid).await
+                                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                                
+                                let mut new_values = vec![Value::Null; sorted_new_cols.len()];
+                                for old_col in &sorted_old_cols {
+                                    let val = old_layout.read_field(&old_col.name, old_col.position as usize, &tuple_bytes).unwrap_or(Value::Null);
+                                    new_values[old_col.position as usize] = val;
+                                }
+                                new_values[c.position as usize] = default_val.clone();
+                                
+                                let new_tuple_bytes = new_layout.encode_tuple(&new_col_names, &new_values);
+                                accessor.table_insert(txn, at.table_oid, new_tuple_bytes).await
+                                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
                             }
                         }
 
