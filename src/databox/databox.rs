@@ -183,8 +183,9 @@ impl Value {
 
     /// Attempt to cast this value to the target DataType.
     ///
-    /// Supports widening numeric casts (e.g. I8 -> I64, U16 -> U32, any int -> F64).
-    /// Returns None if the cast is not supported or the value is Null.
+    /// Supports widening and narrowing numeric casts.
+    /// Returns None if the cast is not supported, if the value is out of bounds 
+    /// for the target type, or if the value is Null.
     pub fn cast(&self, target: DataType) -> Option<Value> {
         if self.is_null() {
             return Some(Value::Null);
@@ -194,23 +195,37 @@ impl Value {
             return Some(self.clone());
         }
         match target {
-            DataType::I16 => self.to_i64().map(|v| Value::I16(v as i16)),
-            DataType::I32 => self.to_i64().map(|v| Value::I32(v as i32)),
+            // Signed Integers
+            DataType::I8  => self.to_i64().and_then(|v| i8::try_from(v).ok()).map(Value::I8),
+            DataType::I16 => self.to_i64().and_then(|v| i16::try_from(v).ok()).map(Value::I16),
+            DataType::I32 => self.to_i64().and_then(|v| i32::try_from(v).ok()).map(Value::I32),
             DataType::I64 => self.to_i64().map(Value::I64),
-            DataType::U16 => self.to_u64().map(|v| Value::U16(v as u16)),
-            DataType::U32 => self.to_u64().map(|v| Value::U32(v as u32)),
+            
+            // Unsigned Integers
+            DataType::U8  => self.to_u64().and_then(|v| u8::try_from(v).ok()).map(Value::U8),
+            DataType::U16 => self.to_u64().and_then(|v| u16::try_from(v).ok()).map(Value::U16),
+            DataType::U32 => self.to_u64().and_then(|v| u32::try_from(v).ok()).map(Value::U32),
             DataType::U64 => self.to_u64().map(Value::U64),
+            
+            // Floats (precision loss is standard in SQL casts, so 'as' is acceptable here)
             DataType::F32 => self.to_f64().map(|v| Value::F32(v as f32)),
             DataType::F64 => self.to_f64().map(Value::F64),
+            
+            // Strings
             DataType::String => Some(Value::String(self.to_string())),
+            
+            // Booleans
             DataType::Bool => match self {
-                Value::I8(v) => Some(Value::Bool(*v != 0)),
+                Value::I8(v)  => Some(Value::Bool(*v != 0)),
+                Value::I16(v) => Some(Value::Bool(*v != 0)),
                 Value::I32(v) => Some(Value::Bool(*v != 0)),
                 Value::I64(v) => Some(Value::Bool(*v != 0)),
-                Value::U8(v) => Some(Value::Bool(*v != 0)),
+                Value::U8(v)  => Some(Value::Bool(*v != 0)),
+                Value::U16(v) => Some(Value::Bool(*v != 0)),
+                Value::U32(v) => Some(Value::Bool(*v != 0)),
+                Value::U64(v) => Some(Value::Bool(*v != 0)),
                 _ => None,
             },
-            _ => None,
         }
     }
 

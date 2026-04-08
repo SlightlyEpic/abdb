@@ -409,14 +409,14 @@ fn translate_alter_action(op: &sq::AlterTableOperation) -> Result<AlterTableActi
     }
 }
 
+
 fn translate_insert(insert: sq::Insert) -> Result<Statement> {
-    let table = {
-        let t = insert.table.to_string();
-        if t.trim().is_empty() {
-            return Err(DbError::Parse("INSERT requires a table name".into()));
-        }
-        t
-    };
+    let table = insert.table.to_string();
+    if table.trim().is_empty() {
+        return Err(DbError::Parse("INSERT requires a table name".into()));
+    }
+
+    // (col1, col2) in INSERT INTO table_name (col1, col2)  VALUES (val1, val2);
     let columns = if insert.columns.is_empty() {
         None
     } else {
@@ -429,7 +429,8 @@ fn translate_insert(insert: sq::Insert) -> Result<Statement> {
                 let rows = values
                     .rows
                     .iter()
-                    .map(|row| row.iter().map(translate_expr).collect::<Result<Vec<_>>>())
+                    .map(|row| row.iter().map(translate_expr)
+                    .collect::<Result<Vec<_>>>())
                     .collect::<Result<Vec<_>>>()?;
                 InsertSource::Values(rows)
             }
@@ -453,6 +454,7 @@ fn translate_insert(insert: sq::Insert) -> Result<Statement> {
         source,
     }))
 }
+
 
 fn translate_update(
     table: sq::TableWithJoins,

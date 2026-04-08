@@ -1085,12 +1085,42 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
         if expr.data_type == target {
             return Ok(expr);
         }
+        
         if matches!(expr.kind, BoundExprKind::Literal(BoundLiteral::Null)) {
             return Ok(BoundExpr {
                 data_type: target,
                 ..expr
             });
         }
+
+        if let BoundExprKind::Literal(BoundLiteral::Integer(n)) = expr.kind {
+            let fits = match target {
+                DataType::I8  => i8::try_from(n).is_ok(),
+                DataType::I16 => i16::try_from(n).is_ok(),
+                DataType::I32 => i32::try_from(n).is_ok(),
+                DataType::I64 => true,
+                DataType::U8  => u8::try_from(n).is_ok(),
+                DataType::U16 => u16::try_from(n).is_ok(),
+                DataType::U32 => u32::try_from(n).is_ok(),
+                DataType::U64 => n >= 0,
+                DataType::F32 | DataType::F64 => true,
+                _ => false,
+            };
+
+            if fits {
+                return Ok(BoundExpr {
+                    data_type: target,
+                    ..expr
+                });
+            } else {
+                return Err(BindError::TypeMismatch {
+                    expected: target,
+                    found: expr.data_type,
+                    context: format!("literal {} is out of bounds for {} in {}", n, target, context),
+                });
+            }
+        }
+
         if is_numeric(expr.data_type) && is_numeric(target) {
             if numeric_rank(target) >= numeric_rank(expr.data_type) {
                 return Ok(BoundExpr {
@@ -1103,6 +1133,7 @@ impl<A: Accessor, O: OidAllocator> Binder<A, O> {
                 });
             }
         }
+
         Err(BindError::TypeMismatch {
             expected: target,
             found: expr.data_type,
