@@ -91,6 +91,10 @@ impl Session {
                     return Ok(Response::Rollback);
                 }
                 self.txn_manager.commit(&txn)?;
+                self.accessor
+                    .flush()
+                    .await
+                    .map_err(|e| DbError::Internal(format!("flush on commit failed: {:?}", e)))?;
                 Ok(Response::Commit)
             }
             Rollback => {
@@ -133,15 +137,9 @@ impl Session {
             Ok(exec_result) => {
                 if is_auto_commit {
                     self.txn_manager.commit(&txn)?;
-                }
-                if matches!(
-                    exec_result,
-                    ExecutionResult::RowsAffected(_) | ExecutionResult::Ok(_)
-                ) {
-                    self.accessor
-                        .flush()
-                        .await
-                        .map_err(|e| DbError::Internal(format!("flush failed: {:?}", e)))?;
+                    self.accessor.flush().await.map_err(|e| {
+                        DbError::Internal(format!("flush after auto-commit failed: {:?}", e))
+                    })?;
                 }
                 Ok(execution_result_to_response(exec_result))
             }

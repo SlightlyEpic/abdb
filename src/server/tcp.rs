@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
+use crate::clog::CommitLog;
 use crate::session::Session;
 use crate::transaction::TransactionManager;
 use crate::{
@@ -43,7 +44,8 @@ impl TcpServer {
                 .await
                 .expect("Could not create page directory"),
         );
-        let oid_allocator: Arc<dyn OidAllocator> = Arc::clone(&page_directory) as Arc<dyn OidAllocator>;
+        let oid_allocator: Arc<dyn OidAllocator> =
+            Arc::clone(&page_directory) as Arc<dyn OidAllocator>;
 
         let next_lpage_id = page_directory.get_next_lpage_id().await.unwrap_or(0);
 
@@ -62,9 +64,16 @@ impl TcpServer {
         ));
         let accessor = Arc::new(AccessorImpl::new(Arc::clone(&buffer_pool)));
 
+        let clog_path = config.data_dir.join("commit.clog");
+        let clog = Arc::new(
+            CommitLog::open(clog_path)
+                .await
+                .expect("Could not open commit log"),
+        );
+
         let max_xmin = if needs_bootstrap {
             println!("Initializing new database...");
-            db::bootstrap_database(&*buffer_pool, &*disk_manager, &accessor)
+            db::bootstrap_database(&*buffer_pool, &*disk_manager, &accessor, Arc::clone(&clog))
                 .await
                 .expect("Failed to bootstrap database");
             db::write_marker_file(&config.data_dir)
@@ -73,17 +82,25 @@ impl TcpServer {
             0
         } else {
             println!("Loading existing database...");
-            let x = db::load_catalog(&*buffer_pool, &*disk_manager, &accessor)
+            let x = db::load_catalog(&*buffer_pool, &*disk_manager, &accessor, Arc::clone(&clog))
                 .await
                 .expect("Failed to load catalog");
             println!("Catalog loaded successfully. max_xmin={}", x);
             x
         };
 
+        let next_txn_id = max_xmin + 1;
+        let max_ts = clog.max_ts();
+
+        let txn_manager = Arc::new(
+            TransactionManager::with_next_txn_id(next_txn_id)
+                .with_clog(Arc::clone(&clog))
+                .with_current_ts(if max_ts == 0 { 1 } else { max_ts + 1 }),
+        );
         Self {
             config,
             accessor,
-            txn_manager: Arc::new(TransactionManager::with_next_txn_id(max_xmin + 1)),
+            txn_manager,
             oid_allocator,
         }
     }
@@ -103,8 +120,11 @@ impl TcpServer {
                 .await
                 .expect("Error while accepting connection");
             println!("New client connected: {}", addr);
-            let mut session =
-                Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager), Arc::clone(&self.oid_allocator));
+            let mut session = Session::new(
+                Arc::clone(&self.accessor),
+                Arc::clone(&self.txn_manager),
+                Arc::clone(&self.oid_allocator),
+            );
 
             tokio::spawn(async move {
                 let (reader, mut writer) = socket.split();

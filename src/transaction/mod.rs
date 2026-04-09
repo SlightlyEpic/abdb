@@ -1,7 +1,9 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tokio::sync::broadcast;
+
+pub use crate::clog::{CommitLog, ClogEntry};
 
 pub type TxnId = u64;
 pub type Timestamp = u64;
@@ -53,6 +55,7 @@ pub struct TransactionManager {
     current_ts: AtomicU64,
     states: RwLock<HashMap<TxnId, TxnState>>,
     notifiers: RwLock<HashMap<TxnId, broadcast::Sender<TxnState>>>,
+    clog: Option<Arc<CommitLog>>,
 }
 
 impl TransactionManager {
@@ -66,7 +69,13 @@ impl TransactionManager {
             current_ts: AtomicU64::new(1),
             states: RwLock::new(HashMap::new()),
             notifiers: RwLock::new(HashMap::new()),
+            clog: None,
         }
+    }
+
+    pub fn with_clog(mut self, clog: Arc<CommitLog>) -> Self {
+        self.clog = Some(clog);
+        self
     }
 
     pub fn begin(self: &Arc<Self>, isolation_level: IsolationLevel) -> Txn {
@@ -87,8 +96,20 @@ impl TransactionManager {
     }
 
     pub fn get_txn_state(&self, txn_id: TxnId) -> TxnState {
-        let states = self.states.read().unwrap();
-        states.get(&txn_id).copied().unwrap_or(TxnState::Aborted) 
+        {
+            let states = self.states.read().unwrap();
+            if let Some(&state) = states.get(&txn_id) {
+                return state;
+            }
+        }
+        if let Some(ref clog) = self.clog {
+            match clog.get(txn_id) {
+                Some(ClogEntry::Committed(ts)) => return TxnState::Committed(ts),
+                Some(ClogEntry::Aborted) => return TxnState::Aborted,
+                None => {}
+            }
+        }
+        TxnState::Aborted
     }
 
     pub async fn wait_for_txn(&self, txn_id: TxnId) -> TxnState {
@@ -103,11 +124,12 @@ impl TransactionManager {
             }
 
             let mut notifiers = self.notifiers.write().unwrap();
-            let tx = notifiers.entry(txn_id).or_insert_with(|| broadcast::channel(1).0);
+            let tx = notifiers
+                .entry(txn_id)
+                .or_insert_with(|| broadcast::channel(1).0);
             tx.subscribe()
         };
 
-        
         {
             let states = self.states.read().unwrap();
             if let Some(&state) = states.get(&txn_id) {
@@ -123,12 +145,39 @@ impl TransactionManager {
     pub fn commit(&self, txn: &Txn) -> crate::error::Result<()> {
         let commit_ts = self.current_ts.fetch_add(1, Ordering::SeqCst) + 1;
         self.finish_txn(txn.id, TxnState::Committed(commit_ts));
+
+        if let Some(ref clog) = self.clog {
+            let clog = Arc::clone(clog);
+            let txn_id = txn.id;
+            tokio::spawn(async move {
+                if let Err(e) = clog.record_commit(txn_id, commit_ts).await {
+                    eprintln!("CLOG: failed to persist commit for txn {}: {}", txn_id, e);
+                }
+            });
+        }
+
         Ok(())
     }
 
     pub fn rollback(&self, txn: &Txn) -> crate::error::Result<()> {
         self.finish_txn(txn.id, TxnState::Aborted);
+
+        if let Some(ref clog) = self.clog {
+            let clog = Arc::clone(clog);
+            let txn_id = txn.id;
+            tokio::spawn(async move {
+                if let Err(e) = clog.record_abort(txn_id).await {
+                    eprintln!("CLOG: failed to persist abort for txn {}: {}", txn_id, e);
+                }
+            });
+        }
+
         Ok(())
+    }
+
+    pub fn with_current_ts(self, ts: Timestamp) -> Self {
+        self.current_ts.store(ts, Ordering::SeqCst);
+        self
     }
 
     fn finish_txn(&self, txn_id: TxnId, state: TxnState) {

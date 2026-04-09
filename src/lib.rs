@@ -2,6 +2,7 @@ pub mod accessor;
 pub mod binder;
 pub mod buffer;
 pub mod catalog;
+pub mod clog;
 pub mod common;
 pub mod databox;
 pub mod db;
