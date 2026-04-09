@@ -8,6 +8,7 @@ use crate::{
     accessor::AccessorImpl,
     buffer::{evictor::LruKEvictor, r#impl::BufferPool},
     db,
+    response::Response,
     server::config::AbdbConfig,
     storage::{DiskManagerImpl, allocator::SimpleAllocator, directory::BTreePageDirectory},
 };
@@ -106,52 +107,42 @@ impl TcpServer {
                 Session::new(Arc::clone(&self.accessor), Arc::clone(&self.txn_manager), Arc::clone(&self.oid_allocator));
 
             tokio::spawn(async move {
-                // 1. Split the socket so we can read and write independently
                 let (reader, mut writer) = socket.split();
 
-                let welcome_message = "=== Connected to abdb ===\n\nabdb> ";
-                if writer.write_all(welcome_message.as_bytes()).await.is_err() {
-                    eprintln!("Failed to write welcome message to client {}", addr);
+                let welcome = "Connected to abdb\n\nabdb> ";
+                if writer.write_all(welcome.as_bytes()).await.is_err() {
                     return;
                 }
 
-                // 2. Wrap the reader in a BufReader to handle newline buffering
                 let mut buf_reader = BufReader::new(reader);
-                let mut query = String::new();
+                let mut line = String::new();
 
                 loop {
-                    query.clear(); // Clear the buffer for the next query
-
-                    // 3. Read until we hit a newline (\n)
-                    // TODO: use ';' as delimiter
-                    match buf_reader.read_line(&mut query).await {
+                    line.clear();
+                    match buf_reader.read_line(&mut line).await {
                         Ok(0) => {
                             println!("Client {} disconnected.", addr);
-                            return; // Connection closed securely
+                            return;
                         }
                         Ok(_) => {
-                            let sql = query.trim();
+                            let sql = line.trim();
                             if sql.is_empty() {
-                                if writer.write_all("abdb> ".as_bytes()).await.is_err() {
-                                    println!("Failed to write to client {}", addr);
-                                }
+                                let _ = writer.write_all(b"abdb> ").await;
                                 continue;
-                            } // Ignore empty lines
+                            }
 
-                            println!("Executing: {}", sql);
+                            let responses = session.execute_sql(sql).await;
+                            let mut output = String::from("\n");
 
-                            // 4. Send to your database engine
-                            let result = format!(
-                                "\n{}\n\nabdb> ", 
-                                match session.execute_sql(sql).await {
-                                    Ok(res) => res,
-                                    Err(e) => e.to_string(),
+                            for r in responses {
+                                match r {
+                                    Ok(resp) => output.push_str(&format_response(resp)),
+                                    Err(e) => output.push_str(&format!("ERROR: {}\n", e)),
                                 }
-                            );
+                            }
 
-                            // 5. Send the result back to the client
-                            if writer.write_all(result.as_bytes()).await.is_err() {
-                                println!("Failed to write to client {}", addr);
+                            output.push_str("\nabdb> ");
+                            if writer.write_all(output.as_bytes()).await.is_err() {
                                 return;
                             }
                         }
@@ -162,6 +153,65 @@ impl TcpServer {
                     }
                 }
             });
+        }
+    }
+}
+
+fn format_response(resp: Response) -> String {
+    match resp {
+        Response::Notice(msg) => format!("{}\n", msg),
+        Response::RowsAffected(n) => format!("{} row(s) affected\n", n),
+        Response::BeginTransaction => "BEGIN\n".into(),
+        Response::Commit => "COMMIT\n".into(),
+        Response::Rollback => "ROLLBACK\n".into(),
+        Response::Rows { columns, rows } => {
+            if columns.is_empty() {
+                return format!("({} row(s))\n", rows.len());
+            }
+
+            let mut col_widths: Vec<usize> = columns.iter().map(|c| c.name.len()).collect();
+            let stringified: Vec<Vec<String>> = rows
+                .iter()
+                .map(|row| row.values.iter().map(|v| v.to_string()).collect())
+                .collect();
+
+            for str_row in &stringified {
+                for (i, val) in str_row.iter().enumerate() {
+                    if i < col_widths.len() {
+                        col_widths[i] = col_widths[i].max(val.len());
+                    }
+                }
+            }
+
+            let mut out = String::new();
+
+            let header: Vec<String> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, c)| format!("{:<width$}", c.name, width = col_widths[i]))
+                .collect();
+            out.push_str(&header.join(" | "));
+            out.push('\n');
+
+            let sep: Vec<String> = col_widths.iter().map(|&w| "-".repeat(w)).collect();
+            out.push_str(&sep.join("-+-"));
+            out.push('\n');
+
+            for str_row in stringified {
+                let cells: Vec<String> = str_row
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let w = col_widths.get(i).copied().unwrap_or(0);
+                        format!("{:<width$}", v, width = w)
+                    })
+                    .collect();
+                out.push_str(&cells.join(" | "));
+                out.push('\n');
+            }
+
+            out.push_str(&format!("({} row(s))\n", rows.len()));
+            out
         }
     }
 }

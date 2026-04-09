@@ -11,6 +11,7 @@ pub mod optimizer;
 pub mod page;
 pub mod parser;
 pub mod planner;
+pub mod response;
 pub mod server;
 pub mod session;
 pub mod storage;
