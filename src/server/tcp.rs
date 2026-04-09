@@ -152,7 +152,7 @@ impl TcpServer {
                             }
 
                             let responses = session.execute_sql(sql).await;
-                            let mut output = String::from("\n");
+                            let mut output = String::from("");
 
                             for r in responses {
                                 match r {
