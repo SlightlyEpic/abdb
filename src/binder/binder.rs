@@ -946,9 +946,13 @@ impl<A: Accessor> Binder<A> {
                 negated,
             } => {
                 let bound_expr = self.bind_expr(expr, scope)?;
+                let target = bound_expr.data_type;
                 let bound_list = list
                     .iter()
-                    .map(|e| self.bind_expr(e, scope))
+                    .map(|e| {
+                        let b = self.bind_expr(e, scope)?;
+                        self.coerce_expr(b, target, "IN list item")
+                    })
                     .collect::<BindResult<Vec<_>>>()?;
                 Ok(BoundExpr {
                     kind: BoundExprKind::In {
@@ -1135,6 +1139,15 @@ impl<A: Accessor> Binder<A> {
                 data_type: target,
                 ..expr
             });
+        }
+
+        if let BoundExprKind::Literal(BoundLiteral::Float(_)) = expr.kind {
+            if matches!(target, DataType::F32 | DataType::F64) {
+                return Ok(BoundExpr {
+                    data_type: target,
+                    ..expr
+                });
+            }
         }
 
         if let BoundExprKind::Literal(BoundLiteral::Integer(n)) = expr.kind {

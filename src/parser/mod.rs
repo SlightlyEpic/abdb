@@ -147,9 +147,7 @@ fn translate_statement(stmt: sq::Statement) -> Result<Statement> {
             if_exists,
             ..
         } => {
-            let table_name = table
-                .ok_or_else(|| DbError::Parse("DROP INDEX missing table name".into()))?
-                .to_string();
+            let table_name = table.map(|t| t.to_string()).unwrap_or_default();
             let name = names
                 .into_iter()
                 .next()

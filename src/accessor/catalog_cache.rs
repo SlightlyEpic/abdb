@@ -4,7 +4,7 @@ use crate::{
     accessor::visibility::is_visible_mvcc, catalog::{self, Column, Index, Table, schema}, common::{aliases::OId, constants, txn::Txn}
 };
 
-use super::accessor::{Error, Result};
+use super::accessor::{Error, FkInfo, Result};
 
 pub(super) struct CatalogCache {
     tables: HashMap<OId, Table>,
@@ -14,6 +14,8 @@ pub(super) struct CatalogCache {
     columns: HashMap<OId, Vec<Column>>,
     indexes: HashMap<OId, Index>,
     indexes_by_name: HashMap<String, Vec<OId>>,
+    // In-memory only (not persisted): FKs declared on a child table_oid.
+    foreign_keys: HashMap<OId, Vec<FkInfo>>,
 }
 
 impl CatalogCache {
@@ -24,6 +26,7 @@ impl CatalogCache {
             columns: HashMap::new(),
             indexes: HashMap::new(),
             indexes_by_name: HashMap::new(),
+            foreign_keys: HashMap::new(),
         };
 
         cache.register_table(schema::SYS_TABLE_TABLES.clone()).unwrap();
@@ -166,6 +169,29 @@ impl CatalogCache {
             .filter(|i| i.table_oid == table_oid && is_visible_mvcc(i.xmin, i.xmax, txn))
             .cloned()
             .collect())
+    }
+
+    pub fn register_fk(&mut self, child_table_oid: OId, fk: FkInfo) {
+        self.foreign_keys.entry(child_table_oid).or_default().push(fk);
+    }
+
+    pub fn get_fks_for(&self, child_table_oid: OId) -> Vec<FkInfo> {
+        self.foreign_keys
+            .get(&child_table_oid)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn get_fks_referencing(&self, parent_table_oid: OId) -> Vec<(OId, FkInfo)> {
+        let mut out = Vec::new();
+        for (child_oid, fks) in self.foreign_keys.iter() {
+            for fk in fks {
+                if fk.parent_table_oid == parent_table_oid {
+                    out.push((*child_oid, fk.clone()));
+                }
+            }
+        }
+        out
     }
 
     pub fn get_all_tables(&self, txn: &Txn) -> Vec<catalog::Table> {

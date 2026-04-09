@@ -151,4 +151,40 @@ pub trait Accessor: Send + Sync {
         index_oid: aliases::OId,
         index_name: String,
     ) -> impl Future<Output = Result<()>> + '_ + Send;
+
+    /// Register a foreign key constraint on `child_table_oid`.
+    /// Default impl is a no-op so existing accessors compile without
+    /// picking up enforcement semantics.
+    fn register_fk(&self, _child_table_oid: aliases::OId, _fk: FkInfo) {}
+
+    /// Foreign keys declared on `child_table_oid` (child → parent).
+    fn get_fks_for(&self, _child_table_oid: aliases::OId) -> Vec<FkInfo> {
+        Vec::new()
+    }
+
+    /// Foreign keys where `parent_table_oid` is the referenced table.
+    /// Returned pairs are (child_table_oid, fk).
+    fn get_fks_referencing(
+        &self,
+        _parent_table_oid: aliases::OId,
+    ) -> Vec<(aliases::OId, FkInfo)> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FkAction {
+    NoAction,
+    Cascade,
+    SetNull,
+    Restrict,
+}
+
+#[derive(Debug, Clone)]
+pub struct FkInfo {
+    pub child_column_oids: Vec<aliases::OId>,
+    pub parent_table_oid: aliases::OId,
+    pub parent_column_oids: Vec<aliases::OId>,
+    pub on_delete: FkAction,
+    pub on_update: FkAction,
 }

@@ -120,7 +120,13 @@ impl Session {
                     Arc::clone(&self.oid_allocator),
                     txn.clone(),
                 );
-                let bound = binder.bind(stmt)?;
+                let mut bound = binder.bind(stmt)?;
+                executor::materialize_subqueries(
+                    &mut bound,
+                    Arc::clone(&self.accessor),
+                    txn.clone(),
+                )
+                .await?;
                 let plan = Planner::plan(bound)?;
                 let optimizer = Optimizer::new(Arc::clone(&self.accessor), txn.clone());
                 let physical = optimizer.optimize(plan)?;

@@ -51,6 +51,10 @@ pub struct Txn {
 pub struct TransactionManager {
     next_txn_id: AtomicU64,
     current_ts: AtomicU64,
+    /// All txn ids <= this horizon are treated as committed if not in `states`.
+    /// Used to recognise persisted-but-unknown xmins after restart (pre-restart
+    /// transactions that survived are assumed committed).
+    committed_horizon: AtomicU64,
     states: RwLock<HashMap<TxnId, TxnState>>,
     notifiers: RwLock<HashMap<TxnId, broadcast::Sender<TxnState>>>,
 }
@@ -63,7 +67,8 @@ impl TransactionManager {
     pub fn with_next_txn_id(next_txn_id: TxnId) -> Self {
         Self {
             next_txn_id: AtomicU64::new(next_txn_id),
-            current_ts: AtomicU64::new(1),
+            current_ts: AtomicU64::new(next_txn_id.max(1)),
+            committed_horizon: AtomicU64::new(next_txn_id.saturating_sub(1)),
             states: RwLock::new(HashMap::new()),
             notifiers: RwLock::new(HashMap::new()),
         }
@@ -88,7 +93,14 @@ impl TransactionManager {
 
     pub fn get_txn_state(&self, txn_id: TxnId) -> TxnState {
         let states = self.states.read().unwrap();
-        states.get(&txn_id).copied().unwrap_or(TxnState::Aborted) 
+        if let Some(&s) = states.get(&txn_id) {
+            return s;
+        }
+        if txn_id != 0 && txn_id <= self.committed_horizon.load(Ordering::SeqCst) {
+            TxnState::Committed(0)
+        } else {
+            TxnState::Aborted
+        }
     }
 
     pub async fn wait_for_txn(&self, txn_id: TxnId) -> TxnState {

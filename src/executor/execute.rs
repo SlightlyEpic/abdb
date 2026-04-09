@@ -52,6 +52,16 @@ pub fn execute<'a, A: Accessor + 'a>(
 
             // DDL operations
             PhysicalPlan::CreateTable(ct) => {
+                if ct.if_not_exists
+                    && accessor
+                        .catalog_get_table_by_name(txn.clone(), &ct.name)
+                        .is_ok()
+                {
+                    return Ok(ExecutionResult::Ok(format!(
+                        "CREATE TABLE {} (skipped: already exists)",
+                        ct.name
+                    )));
+                }
                 // Convert BoundColumnDefs to catalog::Columns
                 let columns: Vec<catalog::Column> = ct
                     .columns
@@ -89,10 +99,86 @@ pub fn execute<'a, A: Accessor + 'a>(
                     xmax: 0,
                 };
 
+                let child_cols_snapshot = columns.clone();
                 accessor
                     .create_table(txn.clone(), table, columns)
                     .await
                     .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+                // Resolve and register foreign keys (in-memory only).
+                for fk in &ct.foreign_keys {
+                    let parent = match accessor
+                        .catalog_get_table_by_name(txn.clone(), &fk.ref_table)
+                    {
+                        Ok(t) => t,
+                        Err(_) => {
+                            return Err(DbError::Internal(format!(
+                                "foreign key references unknown table \"{}\"",
+                                fk.ref_table
+                            )));
+                        }
+                    };
+                    let parent_cols = accessor
+                        .catalog_get_table_columns(txn.clone(), parent.oid)
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+
+                    let mut child_col_oids = Vec::with_capacity(fk.columns.len());
+                    for name in &fk.columns {
+                        let oid = child_cols_snapshot
+                            .iter()
+                            .find(|c| c.name.eq_ignore_ascii_case(name))
+                            .map(|c| c.oid)
+                            .ok_or_else(|| {
+                                DbError::Internal(format!(
+                                    "foreign key column \"{}\" not found in \"{}\"",
+                                    name, ct.name
+                                ))
+                            })?;
+                        child_col_oids.push(oid);
+                    }
+
+                    let mut parent_col_oids = Vec::with_capacity(fk.ref_columns.len());
+                    for name in &fk.ref_columns {
+                        let oid = parent_cols
+                            .iter()
+                            .find(|c| c.name.eq_ignore_ascii_case(name))
+                            .map(|c| c.oid)
+                            .ok_or_else(|| {
+                                DbError::Internal(format!(
+                                    "foreign key references unknown column \"{}\" in \"{}\"",
+                                    name, fk.ref_table
+                                ))
+                            })?;
+                        parent_col_oids.push(oid);
+                    }
+
+                    if child_col_oids.len() != parent_col_oids.len() {
+                        return Err(DbError::Internal(
+                            "foreign key column count mismatch".into(),
+                        ));
+                    }
+
+                    let conv = |a: &Option<crate::parser::ast::ForeignKeyAction>| {
+                        use crate::accessor::FkAction;
+                        match a {
+                            Some(crate::parser::ast::ForeignKeyAction::Cascade) => FkAction::Cascade,
+                            Some(crate::parser::ast::ForeignKeyAction::SetNull) => FkAction::SetNull,
+                            Some(crate::parser::ast::ForeignKeyAction::Restrict) => FkAction::Restrict,
+                            _ => FkAction::NoAction,
+                        }
+                    };
+
+                    accessor.register_fk(
+                        ct.table_oid,
+                        crate::accessor::FkInfo {
+                            child_column_oids: child_col_oids,
+                            parent_table_oid: parent.oid,
+                            parent_column_oids: parent_col_oids,
+                            on_delete: conv(&fk.on_delete),
+                            on_update: conv(&fk.on_update),
+                        },
+                    );
+                }
 
                 Ok(ExecutionResult::Ok(format!("CREATE TABLE {}", ct.name)))
             }
@@ -1335,6 +1421,71 @@ fn execute_insert<'a, A: Accessor>(
                 full_values.push(val);
             }
 
+            // Foreign key enforcement: for each FK declared on this table,
+            // ensure the referenced parent row exists (if any child FK column
+            // is NULL, that FK is skipped per SQL semantics).
+            let fks = accessor.get_fks_for(table.oid);
+            for fk in &fks {
+                let child_vals: Vec<Value> = fk
+                    .child_column_oids
+                    .iter()
+                    .map(|oid| {
+                        sorted_cols
+                            .iter()
+                            .position(|c| c.oid == *oid)
+                            .and_then(|i| full_values.get(i).cloned())
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                if child_vals.iter().any(|v| v.is_null()) {
+                    continue;
+                }
+
+                let parent_cols = accessor
+                    .catalog_get_table_columns(txn.clone(), fk.parent_table_oid)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let parent_layout = TupleLayout::from(parent_cols.clone());
+
+                let stream = accessor
+                    .table_scan(txn.clone(), fk.parent_table_oid)
+                    .await
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let mut stream = std::pin::pin!(stream);
+                let mut found = false;
+                while let Some(result) = stream.next().await {
+                    let (bytes, _) = result
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                    let mut all_eq = true;
+                    for (pcol_oid, cval) in
+                        fk.parent_column_oids.iter().zip(child_vals.iter())
+                    {
+                        let pcol = match parent_cols.iter().find(|c| c.oid == *pcol_oid) {
+                            Some(c) => c,
+                            None => {
+                                all_eq = false;
+                                break;
+                            }
+                        };
+                        let existing = parent_layout
+                            .read_field(&pcol.name, pcol.position as usize, &bytes);
+                        if existing.as_ref() != Some(cval) {
+                            all_eq = false;
+                            break;
+                        }
+                    }
+                    if all_eq {
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    return Err(DbError::Internal(format!(
+                        "foreign key constraint violation: no matching row in parent table for \"{}\"",
+                        table.name
+                    )));
+                }
+            }
+
             let tuple_bytes = layout.encode_tuple(&col_names, &full_values);
 
             accessor
@@ -1354,14 +1505,134 @@ fn execute_delete<'a, A: Accessor>(
     table: &'a catalog::Table,
     accessor: &'a A,
     txn: Txn,
-) -> impl Future<Output = Result<u64>> + 'a {
+) -> BoxFuture<'a, Result<u64>> {
     async move {
         let mut count = 0u64;
+
+        let parent_cols = accessor
+            .catalog_get_table_columns(txn.clone(), table.oid)
+            .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+        let mut sorted_parent_cols = parent_cols.clone();
+        sorted_parent_cols.sort_by_key(|c| c.position);
+        let referencing = accessor.get_fks_referencing(table.oid);
 
         for row in rows {
             let rid = row.rid.ok_or_else(|| {
                 DbError::Internal("Delete requires tuple with RID from table scan".to_string())
             })?;
+
+            // Enforce FKs that reference this parent table.
+            for (child_oid, fk) in &referencing {
+                let parent_vals: Vec<Value> = fk
+                    .parent_column_oids
+                    .iter()
+                    .map(|pcol_oid| {
+                        sorted_parent_cols
+                            .iter()
+                            .position(|c| c.oid == *pcol_oid)
+                            .and_then(|i| row.values.get(i).cloned())
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                if parent_vals.iter().all(|v| v.is_null()) {
+                    continue;
+                }
+
+                let child_table = accessor
+                    .catalog_get_table_by_oid(txn.clone(), *child_oid)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let child_cols = accessor
+                    .catalog_get_table_columns(txn.clone(), *child_oid)
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let mut sorted_child = child_cols.clone();
+                sorted_child.sort_by_key(|c| c.position);
+                let child_layout = TupleLayout::from(sorted_child.clone());
+
+                // Collect matching child rows.
+                let stream = accessor
+                    .table_scan(txn.clone(), *child_oid)
+                    .await
+                    .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                let mut stream = std::pin::pin!(stream);
+                let mut matched: Vec<Tuple> = Vec::new();
+                while let Some(result) = stream.next().await {
+                    let (bytes, crid) = result
+                        .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                    let mut matches = true;
+                    for (ccol_oid, pval) in
+                        fk.child_column_oids.iter().zip(parent_vals.iter())
+                    {
+                        let ccol = match sorted_child.iter().find(|c| c.oid == *ccol_oid) {
+                            Some(c) => c,
+                            None => {
+                                matches = false;
+                                break;
+                            }
+                        };
+                        let existing = child_layout
+                            .read_field(&ccol.name, ccol.position as usize, &bytes);
+                        if existing.as_ref() != Some(pval) {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if matches {
+                        let mut values = Vec::with_capacity(sorted_child.len());
+                        for ccol in &sorted_child {
+                            values.push(
+                                child_layout
+                                    .read_field(&ccol.name, ccol.position as usize, &bytes)
+                                    .unwrap_or(Value::Null),
+                            );
+                        }
+                        matched.push(Tuple {
+                            values,
+                            rid: Some(crid),
+                        });
+                    }
+                }
+
+                if matched.is_empty() {
+                    continue;
+                }
+
+                use crate::accessor::FkAction;
+                match fk.on_delete {
+                    FkAction::Cascade => {
+                        execute_delete(matched, &child_table, accessor, txn.clone())
+                            .await?;
+                    }
+                    FkAction::SetNull => {
+                        let child_names: Vec<&str> =
+                            sorted_child.iter().map(|c| c.name.as_ref()).collect();
+                        for mut tup in matched {
+                            let crid = tup.rid.unwrap();
+                            for ccol_oid in &fk.child_column_oids {
+                                if let Some(idx) =
+                                    sorted_child.iter().position(|c| c.oid == *ccol_oid)
+                                {
+                                    tup.values[idx] = Value::Null;
+                                }
+                            }
+                            accessor
+                                .table_delete(txn.clone(), *child_oid, crid)
+                                .await
+                                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                            let bytes = child_layout.encode_tuple(&child_names, &tup.values);
+                            accessor
+                                .table_insert(txn.clone(), *child_oid, bytes)
+                                .await
+                                .map_err(|e| DbError::AccessorError(format!("{:?}", e)))?;
+                        }
+                    }
+                    FkAction::Restrict | FkAction::NoAction => {
+                        return Err(DbError::Internal(format!(
+                            "foreign key constraint violation: cannot delete row from \"{}\" because it is referenced by \"{}\"",
+                            table.name, child_table.name
+                        )));
+                    }
+                }
+            }
 
             accessor
                 .table_delete(txn.clone(), table.oid, rid)
@@ -1373,6 +1644,7 @@ fn execute_delete<'a, A: Accessor>(
 
         Ok(count)
     }
+    .boxed()
 }
 
 fn execute_update<'a, A: Accessor>(

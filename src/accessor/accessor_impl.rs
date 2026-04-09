@@ -506,4 +506,22 @@ impl<B: BufferPool> Accessor for AccessorImpl<B> {
             Ok(())
         }
     }
+
+    fn register_fk(&self, child_table_oid: aliases::OId, fk: crate::accessor::FkInfo) {
+        let mut cache = self.catalog.write().expect("catalog lock poisoned");
+        cache.register_fk(child_table_oid, fk);
+    }
+
+    fn get_fks_for(&self, child_table_oid: aliases::OId) -> Vec<crate::accessor::FkInfo> {
+        let cache = self.catalog.read().expect("catalog lock poisoned");
+        cache.get_fks_for(child_table_oid)
+    }
+
+    fn get_fks_referencing(
+        &self,
+        parent_table_oid: aliases::OId,
+    ) -> Vec<(aliases::OId, crate::accessor::FkInfo)> {
+        let cache = self.catalog.read().expect("catalog lock poisoned");
+        cache.get_fks_referencing(parent_table_oid)
+    }
 }
